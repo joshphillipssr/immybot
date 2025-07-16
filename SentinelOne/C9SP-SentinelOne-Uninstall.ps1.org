@@ -1,0 +1,32 @@
+# Diagnostic Script: Enumerate All Available Variables
+#
+# PURPOSE:
+# To be run as the second step in an ImmyBot Maintenance Task to determine
+# exactly which variables are passed by the platform into this execution context.
+# This will confirm or deny the presence of variables like $InstallerFile, $Passphrase,
+# $SiteToken, etc.
+
+$VerbosePreference = 'Continue'
+Write-Host "--- Diagnostic Script Started: Enumerating all available variables ---"
+
+try {
+    # Get all variables, sort them by name for readability.
+    # Format-List is used to handle multi-line values cleanly.
+    # Out-String converts the formatted list into a single block of text.
+    $variableDump = Get-Variable | Sort-Object -Property Name | Format-List | Out-String
+
+    Write-Host "--- BEGIN VARIABLE DUMP ---"
+    Write-Host $variableDump
+    Write-Host "--- END VARIABLE DUMP ---"
+
+    # We will intentionally throw an error at the end so the task
+    # still registers as 'failed' but only after we've seen the output.
+    # This prevents it from being marked as a success, which would be misleading.
+    throw "Diagnostic script completed successfully. See log for variable dump."
+
+} catch {
+    # Re-throw the exception to ensure the task fails correctly in ImmyBot.
+    # This will catch our intentional throw from above.
+    Write-Error "DIAGNOSTIC SCRIPT: $_"
+    throw
+}

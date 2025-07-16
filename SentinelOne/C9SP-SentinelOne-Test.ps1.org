@@ -1,0 +1,146 @@
+# S1 Agent Health Check & Remediation Script (Immy Maintenance Task Version - Final Merged Logic)
+#
+# WORKFLOW:
+# This script is designed to be run from a custom ImmyBot Maintenance Task.
+# It assumes that the ImmyBot environment is providing the following variables:
+# - $SentinelOneUri, $ApiKey, $Passphrase
+
+$ProgressPreference = 'SilentlyContinue'
+$VerbosePreference = 'Continue'
+
+try {
+    Write-Verbose "--- S1 Health Check & In-Place Remediation started in METASCRIPT context ---"
+
+    # --- Pre-flight Check: Validate Environment Variables ---
+    if ([string]::IsNullOrWhiteSpace($Passphrase)) {
+        throw "Passphrase variable was not provided by the ImmyBot environment. Please ensure the custom Maintenance Task is configured correctly with a 'Passphrase' parameter."
+    }
+    if ([string]::IsNullOrWhiteSpace($ApiKey)) {
+        throw "ApiKey variable was not provided by the ImmyBot environment. Please ensure the SentinelOne Integration is configured correctly."
+    }
+    Write-Verbose "All required credentials (ApiKey, Passphrase) have been provided by the environment."
+
+    Write-Verbose "Importing SentinelOne module and connecting to API..."
+    Import-Module SentinelOne -ErrorAction Stop
+    Connect-S1API -S1Uri $SentinelOneUri -S1ApiToken $ApiKey | Out-Null
+    Write-Verbose "SentinelOne context loaded successfully."
+
+    # === PHASE 1: UNIFIED CHECK & REMEDIATION ===
+    Write-Verbose "[Phase 1] Performing unified agent check and in-place remediation..."
+    $finalResultObject = Invoke-ImmyCommand {
+        
+        # --- Helper Function 1: Find SentinelCtl.exe ---
+        function Get-SentinelCtlPath {
+            try {
+                $helper = New-Object -ComObject "SentinelHelper.1"
+                $agentStatus = $helper.GetAgentStatusJSON() | ConvertFrom-Json
+                $agentVersion = $agentStatus[0].'agent-version'
+                $ctlPath = "C:\Program Files\SentinelOne\Sentinel Agent $agentVersion\SentinelCtl.exe"
+                if (Test-Path -LiteralPath $ctlPath) { return $ctlPath }
+            }
+            catch {
+                Write-Warning "COM object method failed. Falling back to wildcard search..."
+            }
+            $ctlPath = Get-ChildItem -Path 'C:\Program Files\SentinelOne\Sentinel Agent*\SentinelCtl.exe' -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+            if ($ctlPath -and (Test-Path -LiteralPath $ctlPath)) { return $ctlPath }
+            throw "Could not locate SentinelCtl.exe after trying both COM and file system search methods."
+        }
+        
+        # --- NEW HELPER FUNCTION 2: Reusable Health Check ---
+        function Get-S1HealthStatus {
+            param(
+                [string]$SentinelCtlPath
+            )
+            $statusOutput = & $SentinelCtlPath status
+            
+            $isAgentLoaded = $statusOutput | Select-String -Pattern "SentinelAgent is loaded" -Quiet
+            $isAgentRunning = $statusOutput | Select-String -Pattern "SentinelAgent is running as PPL" -Quiet
+            $disableLineMatch = $statusOutput | Select-String -Pattern "Disable State:"
+            $isAgentDisabled = $disableLineMatch -and ($disableLineMatch.Line -notlike "*Not disabled*")
+            
+            $finalStatus = if ($isAgentLoaded -and $isAgentRunning -and -not $isAgentDisabled) { "[PASS]" } else { "[FAIL]" }
+            
+            # Return a rich object containing all necessary data
+            return [PSCustomObject]@{
+                Status     = $finalStatus
+                IsDisabled = $isAgentDisabled
+                RawOutput  = $statusOutput
+            }
+        }
+
+        # --- Main Logic within the single script block ---
+        try {
+            
+            # --- TEMPORARY EDIT FOR TESTING ---
+            throw "FORCED FAILURE: Testing handoff to the Uninstallation script."
+            # --- END TEMPORARY EDIT ---
+            
+            # 1. INITIAL DIAGNOSTIC (using new function)
+            $sentinelCtlPath = Get-SentinelCtlPath
+            $initialHealth = Get-S1HealthStatus -SentinelCtlPath $sentinelCtlPath
+
+            Write-Host "Initial Parsed Status: $($initialHealth.Status)"
+            Write-Host "--- RAW 'sentinelctl status' OUTPUT (Initial Check) ---"
+            $initialHealth.RawOutput
+
+            # 2. CONDITIONAL REMEDIATION
+            if ($initialHealth.Status -eq '[FAIL]') {
+                Write-Warning "Agent status check failed. Attempting intelligent in-place remediation..."
+                $pass = $using:Passphrase
+
+                # Use the boolean from the health object for our decision
+                if ($initialHealth.IsDisabled) {
+                    $argumentList = @("enable_agent")
+                    Write-Verbose "Detected 'Disable State'. Attempting to re-enable with 'enable_agent' command..."
+                } else {
+                    $argumentList = @("reload", "-a", "-k", "`"$pass`"")
+                    Write-Verbose "Detected a general service failure. Attempting to reload components..."
+                }
+                
+                Write-Verbose "Executing: `"$sentinelCtlPath`" $($argumentList -join ' ')"
+                $commandOutput = & $sentinelCtlPath $argumentList 2>&1 | Out-String
+
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "Remediation command '$($argumentList[0])' failed. Raw output from SentinelCtl.exe follows:"
+                    Write-Warning $commandOutput
+                    throw "The remediation command '$($argumentList[0])' failed with exit code $LASTEXITCODE."
+                }
+                
+                Write-Verbose "Remediation command completed successfully. Waiting 15 seconds for services to settle..."
+                Start-Sleep -Seconds 15
+
+                # 3. FINAL VALIDATION (using new function) --- THIS BLOCK WAS MISSING AND IS NOW RESTORED
+                Write-Verbose "Performing final validation check after remediation..."
+                $finalHealth = Get-S1HealthStatus -SentinelCtlPath $sentinelCtlPath
+                
+                $finalStatus = if ($finalHealth.Status -eq '[PASS]') { "[PASS_REMEDIATED]" } else { "[FATAL]" }
+                
+                Write-Host "Remediation Parsed Status: $finalStatus"
+                Write-Host "--- RAW 'sentinelctl status' OUTPUT (After Remediation) ---"
+                $finalHealth.RawOutput
+                
+                return @{ Status = $finalStatus; Message = "Remediation attempted." }
+            }
+
+            # If initial check passed, return success immediately.
+            return @{ Status = "[PASS]"; Message = "Initial agent check passed, no action needed." }
+
+        } catch {
+            return @{ Status = "[FATAL]"; Message = "An unrecoverable error occurred inside the remote script block: $($_.Exception.Message)" }
+        }
+    }
+
+    Write-Verbose "Final result from endpoint: $($finalResultObject | ConvertTo-Json -Depth 3 -Compress)"
+
+    if ($finalResultObject.Status -eq '[FATAL]') {
+        throw "The unified check/remediation script failed. Final Status: $($finalResultObject.Status). Message: $($finalResultObject.Message)"
+    }
+    
+    Write-Host "--- Phase 1 Completed Successfully ---"
+    Write-Host "Final Status: $($finalResultObject.Status)"
+    return $true
+
+} catch {
+    Write-Error "A fatal, unrecoverable error occurred in the MetaScript: $_"
+    return $null
+}

@@ -1,27 +1,27 @@
-# S1 Agent "Nuclear" Uninstallation Script (Immy Maintenance Task)
+# S1 Agent Uninstallation Script
 #
 # PURPOSE:
-# This script is designed to run as an ImmyBot "Reinstallation" or "Uninstallation" task.
-# It is triggered when the "Test & Remediate" script fails, indicating a severely corrupted agent.
+# This script is designed to run as an ImmyBot "Uninstallation" task.
+# Still determining how and when it is triggered.
 #
-# WORKFLOW (based on research from ticket T20250611.0014, entry 06/25/2025):
+# WORKFLOW
 # The script will attempt a tiered, sequential removal process, escalating in aggression:
 # 1. Method 1: S1 Recommended standard uninstaller (uninstall.exe).
-# 2. Method 2: Modern Installer with Clean flag (-c).
+# 2. Method 2: Modern Installer .exe with Clean flag (-c).
 # 3. Method 3: Legacy Standalone Cleaner (SentinelCleaner.exe).
 # After each attempt, it verifies success. If all methods fail, it throws a fatal error.
 
 # --- SCRIPT PARAMETERS (Provided by ImmyBot) ---
 # $InstallerFile: The full path to the primary (modern) SentinelOneInstaller.exe.
-# $Passphrase: The agent removal passphrase.
-# $SiteToken: The site-specific token for the agent.
+# $Passphrase: The agent removal passphrase. Note: This needs to be updated to leverage C9DI-SentinelOne Integration.
+# $SiteToken: The site-specific token for the agent. Note: Same as above, needs to be updated to leverage C9DI-SentinelOne Integration.
 
 $ProgressPreference = 'SilentlyContinue'
 $VerbosePreference = 'Continue'
 
 try {
     # --- Pre-flight Checks: Validate Required Variables ---
-    Write-Verbose "--- S1 Nuclear Uninstallation Script Started ---"
+    Write-Verbose "--- C9SP-SentinelOneUninstallation Script Started ---"
     if ([string]::IsNullOrWhiteSpace($InstallerFile) -or -not (Test-Path -LiteralPath $InstallerFile)) {
         throw "InstallerFile variable was not provided by ImmyBot or the path is invalid. This is required for Methods 2 & 3."
     }
@@ -57,7 +57,7 @@ try {
 
     # --- Tiered Removal Logic ---
 
-    # Method 1: S1 Recommended Uninstall (as documented 06/25/2025)
+    # Method 1: S1 Recommended Uninstall
     Write-Verbose "--- Method 1: Attempting S1 Recommended Uninstall ---"
     $installPath = Get-S1InstallPath
     if ($installPath) {
@@ -81,7 +81,7 @@ try {
     }
     Write-Warning "Method 1 failed or was skipped. Proceeding to Method 2."
 
-    # Method 2: Modern Installer with Clean Flag (as documented 06/25/2025 for 'ghost state')
+    # Method 2: Modern Installer .exewith Clean Flag
     Write-Verbose "--- Method 2: Attempting Modern Installer with '-c' flag ---"
     $cleanerArgs = "-c -k `"$Passphrase`" -t `"$SiteToken`""
     Write-Verbose "Executing: `"$InstallerFile`" $cleanerArgs"
@@ -92,13 +92,13 @@ try {
         Write-Host "SUCCESS: Method 2 (Modern Installer Clean) was successful."
         return $true
     }
-    Write-Warning "Method 2 failed. Proceeding to Method 3 (Nuclear Option)."
+    Write-Warning "Method 2 failed. Proceeding to Method 3."
 
-    # Method 3: Legacy Standalone Cleaner (as documented 06/25/2025 for severe corruption)
-    Write-Verbose "--- Method 3 (Nuclear): Attempting Legacy Standalone Cleaner ---"
+    # Method 3: Legacy Standalone Cleaner
+    Write-Verbose "--- Method 3: Attempting Legacy Standalone Cleaner ---"
     $installerDir = Split-Path -Path $InstallerFile -Parent
     # Assumes the legacy cleaner is named this and is in the same folder as the modern installer.
-    $legacyCleaner = Join-Path -Path $installerDir -ChildPath "SentinelCleaner_22_1GA_64.exe" 
+    $legacyCleaner = Join-Path -Path $installerDir -ChildPath "SentinelCleaner.exe" 
     
     if (Test-Path -LiteralPath $legacyCleaner) {
         Write-Verbose "Found legacy cleaner at '$legacyCleaner'. Executing with no flags as per research."
@@ -107,7 +107,7 @@ try {
         # The legacy cleaner can be aggressive and may require a moment for services to be de-registered.
         Start-Sleep -Seconds 15
         if (Test-S1AgentRemoved) {
-            Write-Host "SUCCESS: Method 3 (Legacy Cleaner) was successful."
+            Write-Host "SUCCESS: Method 3 was successful."
             return $true
         }
     } else {
