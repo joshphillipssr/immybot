@@ -1,0 +1,801 @@
+{
+  "EnvironmentInfo": {
+    "LanguageMode": 3,
+    "PSVersionTable": {
+      "SerializationVersion": {
+        "Major": 1,
+        "Minor": 1,
+        "Build": 0,
+        "Revision": 1,
+        "MajorRevision": 0,
+        "MinorRevision": 1
+      },
+      "Platform": "Unix",
+      "OS": "Debian GNU/Linux 12 (bookworm)",
+      "PSRemotingProtocolVersion": {
+        "Major": 2,
+        "Minor": 3,
+        "Build": -1,
+        "Revision": -1,
+        "MajorRevision": -1,
+        "MinorRevision": -1
+      },
+      "PSEdition": "Core",
+      "PSCompatibleVersions": [
+        {
+          "Major": 1,
+          "Minor": 0,
+          "Build": -1,
+          "Revision": -1,
+          "MajorRevision": -1,
+          "MinorRevision": -1
+        },
+        {
+          "Major": 2,
+          "Minor": 0,
+          "Build": -1,
+          "Revision": -1,
+          "MajorRevision": -1,
+          "MinorRevision": -1
+        },
+        {
+          "Major": 3,
+          "Minor": 0,
+          "Build": -1,
+          "Revision": -1,
+          "MajorRevision": -1,
+          "MinorRevision": -1
+        },
+        {
+          "Major": 4,
+          "Minor": 0,
+          "Build": -1,
+          "Revision": -1,
+          "MajorRevision": -1,
+          "MinorRevision": -1
+        },
+        {
+          "Major": 5,
+          "Minor": 0,
+          "Build": -1,
+          "Revision": -1,
+          "MajorRevision": -1,
+          "MinorRevision": -1
+        },
+        {
+          "Major": 5,
+          "Minor": 1,
+          "Build": -1,
+          "Revision": -1,
+          "MajorRevision": -1,
+          "MinorRevision": -1
+        },
+        {
+          "Major": 6,
+          "Minor": 0,
+          "Build": -1,
+          "Revision": -1,
+          "MajorRevision": -1,
+          "MinorRevision": -1
+        },
+        {
+          "Major": 7,
+          "Minor": 0,
+          "Build": -1,
+          "Revision": -1,
+          "MajorRevision": -1,
+          "MinorRevision": -1
+        }
+      ],
+      "GitCommitId": "7.4.0",
+      "PSVersion": {
+        "Major": 7,
+        "Minor": 4,
+        "Patch": 0,
+        "PreReleaseLabel": null,
+        "BuildLabel": null
+      },
+      "WSManStackVersion": {
+        "Major": 3,
+        "Minor": 0,
+        "Build": -1,
+        "Revision": -1,
+        "MajorRevision": -1,
+        "MinorRevision": -1
+      }
+    },
+    "OS": null,
+    "PSModulePath": [
+      ""
+    ]
+  },
+  "AvailableVariables": [
+    {
+      "Name": "?",
+      "Value": "True"
+    },
+    {
+      "Name": "ActionId",
+      "Value": "1203693"
+    },
+    {
+      "Name": "ActionName",
+      "Value": "C9SP-SentinelOne-ConfigTask"
+    },
+    {
+      "Name": "ActionParameters",
+      "Value": null
+    },
+    {
+      "Name": "ActionReason",
+      "Value": "TaskMonitor"
+    },
+    {
+      "Name": "ActionResult",
+      "Value": "Pending"
+    },
+    {
+      "Name": "ActionResultReason",
+      "Value": null
+    },
+    {
+      "Name": "ActionStatus",
+      "Value": "PerformingAction"
+    },
+    {
+      "Name": "ActionType",
+      "Value": "TaskMonitor"
+    },
+    {
+      "Name": "args",
+      "Value": null
+    },
+    {
+      "Name": "AssignmentId",
+      "Value": "1108"
+    },
+    {
+      "Name": "AssignmentScope",
+      "Value": "CrossTenant"
+    },
+    {
+      "Name": "AssignmentType",
+      "Value": "Local"
+    },
+    {
+      "Name": "AutoConsentToReboots",
+      "Value": "False"
+    },
+    {
+      "Name": "AzureTenantId",
+      "Value": "c8b30f6e-a4a1-434d-a20e-d7d13efe3f0a"
+    },
+    {
+      "Name": "CanAccessParentTenant",
+      "Value": "True"
+    },
+    {
+      "Name": "Computer",
+      "Value": [
+        "",
+        "Id                                        : 78",
+        "Name                                      : C9CG-2023-01",
+        "OperatingSystemName                       : Microsoft Windows 11 Enterprise",
+        "OnboardingStatus                          : Onboarded",
+        "SerialNumber                              : N2N0CV05X528074",
+        "IsOnline                                  : True",
+        "TenantId                                  : 1",
+        "TenantName                                : Cloud 9 Computing Group",
+        "PrimaryPersonName                         : Josh Phillips",
+        "PrimaryPersonId                           : 2101",
+        "PrimaryPersonOnPremisesSecurityIdentifier : S-1-12-1-2344962969-1140305005-3344949664-685889962",
+        "Tags                                      : {PSComputerTag { Id = 354, Name = S1Latest }}",
+        ""
+      ]
+    },
+    {
+      "Name": "ComputerName",
+      "Value": "C9CG-2023-01"
+    },
+    {
+      "Name": "ConfirmPreference",
+      "Value": "High"
+    },
+    {
+      "Name": "DebugPreference",
+      "Value": "SilentlyContinue"
+    },
+    {
+      "Name": "DesiredState",
+      "Value": "AnyVersion"
+    },
+    {
+      "Name": "DetectionString",
+      "Value": "^Sentinel Agent$"
+    },
+    {
+      "Name": "DeviceId",
+      "Value": [
+        "",
+        "Guid",
+        "----",
+        "0c670dd5-0431-ec4c-afa1-a2913243cfd2",
+        ""
+      ]
+    },
+    {
+      "Name": "DynamicIntegrationTypeProperties",
+      "Value": null
+    },
+    {
+      "Name": "EnabledExperimentalFeatures",
+      "Value": null
+    },
+    {
+      "Name": "envInfo",
+      "Value": [
+        "",
+        "       LanguageMode PSVersionTable",
+        "       ------------ --------------                                                                                      ",
+        "ConstrainedLanguage {[PSVersion, 7.4.0], [PSEdition, Core], [GitCommitId, 7.4.0], [OS, Debian GNU/Linux 12 (bookworm)]…}",
+        ""
+      ]
+    },
+    {
+      "Name": "Error",
+      "Value": null
+    },
+    {
+      "Name": "ErrorActionPreference",
+      "Value": "Continue"
+    },
+    {
+      "Name": "ErrorView",
+      "Value": "ConciseView"
+    },
+    {
+      "Name": "ExecutionContext",
+      "Value": [
+        "",
+        "Host           : System.Management.Automation.Internal.Host.InternalHost",
+        "Events         : System.Management.Automation.PSLocalEventManager",
+        "InvokeProvider : System.Management.Automation.ProviderIntrinsics",
+        "SessionState   : System.Management.Automation.SessionState",
+        "InvokeCommand  : System.Management.Automation.CommandInvocationIntrinsics",
+        ""
+      ]
+    },
+    {
+      "Name": "false",
+      "Value": "False"
+    },
+    {
+      "Name": "FormatEnumerationLimit",
+      "Value": "4"
+    },
+    {
+      "Name": "HOME",
+      "Value": "/home"
+    },
+    {
+      "Name": "Host",
+      "Value": [
+        "",
+        "Name             : ConsoleHost",
+        "Version          : 1.0",
+        "InstanceId       : 4bf5a8d4-5087-45a0-8eaa-83fa5aeaa2e3",
+        "UI               : System.Management.Automation.Internal.Host.InternalHostUserInterface",
+        "CurrentCulture   : ",
+        "CurrentUICulture : ",
+        "PrivateData      : ",
+        "DebuggerEnabled  : True",
+        "IsRunspacePushed : ",
+        "Runspace         : ",
+        ""
+      ]
+    },
+    {
+      "Name": "ImmyBotVersion",
+      "Value": [
+        "",
+        "Major         : 0",
+        "Minor         : 69",
+        "Patch         : 1",
+        "ReleaseLabels : {build, 40670}",
+        "Release       : build.40670",
+        "IsPrerelease  : True",
+        "HasMetadata   : True",
+        "Metadata      : commit-cd1b6d6235a9c57e881c55f755524b3193059b7b.ref-refs--heads--release--0---69---1.rc",
+        ""
+      ]
+    },
+    {
+      "Name": "ImmyScriptPath",
+      "Value": "194071a7afb94f6dbfaf298bca18be93"
+    },
+    {
+      "Name": "InformationPreference",
+      "Value": "SilentlyContinue"
+    },
+    {
+      "Name": "input",
+      "Value": null
+    },
+    {
+      "Name": "IntegrationContext",
+      "Value": null
+    },
+    {
+      "Name": "IsPortable",
+      "Value": "True"
+    },
+    {
+      "Name": "IsServer",
+      "Value": "False"
+    },
+    {
+      "Name": "MaintenanceTaskName",
+      "Value": "C9SP-SentinelOne-ConfigTask"
+    },
+    {
+      "Name": "method",
+      "Value": "get"
+    },
+    {
+      "Name": "MyInvocation",
+      "Value": [
+        "",
+        "MyCommand             : #Requires -Version 5.1",
+        "                        <#",
+        "                        .SYNOPSIS",
+        "                            A diagnostic harness for the ImmyBot \"Cloud Script\" context, hardened for ConstrainedLanguage mode.",
+        "                        .DESCRIPTION",
+        "                            This script is designed to be run as a Cloud Script to generate a comprehensive report",
+        "                            on its execution environment. It is fully compatible with PowerShell's ConstrainedLanguage",
+        "                            mode, avoiding the creation of complex .NET types like ArrayList.",
+        "                        .NOTES",
+        "                            Author:     Josh Phillips",
+        "                            Created:    07/15/2025",
+        "                            Version:    2.0.0 - ConstrainedLanguage Hardened",
+        "                        #>",
+        "                        ",
+        "                        # This script runs entirely in the server-side Cloud Script context.",
+        "                        ",
+        "                        $VerbosePreference = 'Continue'",
+        "                        $ProgressPreference = 'SilentlyContinue'",
+        "                        ",
+        "                        $report = New-Object -TypeName PSObject",
+        "                        ",
+        "                        try {",
+        "                            # --- Phase 1: Environment & Language Mode ---",
+        "                            Write-Verbose \"Phase 1: Gathering Environment Information...\"",
+        "                            $envInfo = New-Object -TypeName PSObject",
+        "                            try {",
+        "                                Add-Member -InputObject $envInfo -MemberType NoteProperty -Name 'LanguageMode' -Value $ExecutionContext.SessionState.LanguageMode",
+        "                                Add-Member -InputObject $envInfo -MemberType NoteProperty -Name 'PSVersionTable' -Value $PSVersionTable",
+        "                                Add-Member -InputObject $envInfo -MemberType NoteProperty -Name 'OS' -Value $env:OS",
+        "                                Add-Member -InputObject $envInfo -MemberType NoteProperty -Name 'PSModulePath' -Value ($env:PSModulePath -split ':')",
+        "                            } catch {",
+        "                                Add-Member -InputObject $envInfo -MemberType NoteProperty -Name 'Error' -Value \"Failed to gather environment info: $($_.Exception.Message)\"",
+        "                            }",
+        "                            Add-Member -InputObject $report -MemberType NoteProperty -Name 'EnvironmentInfo' -Value $envInfo",
+        "                        ",
+        "                        ",
+        "                            # --- Phase 2: Variable Inspection ---",
+        "                            Write-Verbose \"Phase 2: Inspecting all available variables...\"",
+        "                            # CHANGE: Replaced the incompatible New-Object call with a ConstrainedLanguage-safe array.",
+        "                            $varList = @()",
+        "                            try {",
+        "                                $allVars = Get-Variable",
+        "                                foreach ($var in $allVars) {",
+        "                                    $varDetail = New-Object -TypeName PSObject",
+        "                                    Add-Member -InputObject $varDetail -MemberType NoteProperty -Name 'Name' -Value $var.Name",
+        "                                    Add-Member -InputObject $varDetail -MemberType NoteProperty -Name 'Value' -Value ($var.Value | Out-String -Stream)",
+        "                                    # CHANGE: Use the += operator to add to the array.",
+        "                                    $varList += $varDetail",
+        "                                }",
+        "                            } catch {",
+        "                                $varList += \"Failed to enumerate variables: $($_.Exception.Message)\"",
+        "                            }",
+        "                            Add-Member -InputObject $report -MemberType NoteProperty -Name 'AvailableVariables' -Value $varList",
+        "                        ",
+        "                        ",
+        "                            # --- Phase 3: Integration Context Deep Dive ---",
+        "                            Write-Verbose \"Phase 3: Performing a deep dive on `$IntegrationContext...\"",
+        "                            $contextDetail = New-Object -TypeName PSObject",
+        "                            try {",
+        "                                if (Get-Variable -Name 'IntegrationContext' -ErrorAction SilentlyContinue) {",
+        "                                    Add-Member -InputObject $contextDetail -MemberType NoteProperty -Name 'Exists' -Value $true",
+        "                                    foreach ($key in $IntegrationContext.Keys) {",
+        "                                        Add-Member -InputObject $contextDetail -MemberType NoteProperty -Name $key -Value $IntegrationContext[$key]",
+        "                                    }",
+        "                                } else {",
+        "                                    Add-Member -InputObject $contextDetail -MemberType NoteProperty -Name 'Exists' -Value $false",
+        "                                }",
+        "                            } catch {",
+        "                                Add-Member -InputObject $contextDetail -MemberType NoteProperty -Name 'Error' -Value \"Failed to inspect `$IntegrationContext: $($_.Exception.Message)\"",
+        "                            }",
+        "                            Add-Member -InputObject $report -MemberType NoteProperty -Name 'IntegrationContextDetail' -Value $contextDetail",
+        "                        ",
+        "                        ",
+        "                            # --- Phase 4: Module Import Test ---",
+        "                            Write-Verbose \"Phase 4: Attempting to import C9SentinelOne.psm1 module...\"",
+        "                            $moduleInfo = New-Object -TypeName PSObject",
+        "                            try {",
+        "                                Import-Module C9SentinelOne -ErrorAction Stop",
+        "                                Add-Member -InputObject $moduleInfo -MemberType NoteProperty -Name 'ImportResult' -Value 'Success'",
+        "                                $importedCommands = Get-Command -Module C9SentinelOne | Select-Object -ExpandProperty Name",
+        "                                Add-Member -InputObject $moduleInfo -MemberType NoteProperty -Name 'ExportedCommands' -Value $importedCommands",
+        "                            } catch {",
+        "                                Add-Member -InputObject $moduleInfo -MemberType NoteProperty -Name 'ImportResult' -Value 'Failure'",
+        "                                Add-Member -InputObject $moduleInfo -MemberType NoteProperty -Name 'Error' -Value \"Failed to import module: $($_.Exception.Message)\"",
+        "                            }",
+        "                            Add-Member -InputObject $report -MemberType NoteProperty -Name 'ModuleImportTest' -Value $moduleInfo",
+        "                        ",
+        "                        } catch {",
+        "                            Add-Member -InputObject $report -MemberType NoteProperty -Name 'FATAL_ERROR' -Value \"The harness script failed unexpectedly: $($_.Exception.Message)\"",
+        "                        }",
+        "                        ",
+        "                        # --- Final Output ---",
+        "                        Write-Host \"--- Harness Execution Complete. Returning JSON Report. ---\"",
+        "                        Write-Host \"--- Copy/paste the output below into jsononline.net/json-beautifier to view it nicely formatted. ---\"",
+        "                        return $report | ConvertTo-Json -Depth 10",
+        "BoundParameters       : {}",
+        "UnboundArguments      : {}",
+        "ScriptLineNumber      : 0",
+        "OffsetInLine          : 0",
+        "HistoryId             : 1",
+        "ScriptName            : ",
+        "Line                  : ",
+        "Statement             : ",
+        "PositionMessage       : ",
+        "PSScriptRoot          : ",
+        "PSCommandPath         : ",
+        "InvocationName        : ",
+        "PipelineLength        : 3",
+        "PipelinePosition      : 1",
+        "ExpectingInput        : False",
+        "CommandOrigin         : Runspace",
+        "DisplayScriptPosition : ",
+        ""
+      ]
+    },
+    {
+      "Name": "NestedPromptLevel",
+      "Value": "0"
+    },
+    {
+      "Name": "null",
+      "Value": null
+    },
+    {
+      "Name": "OutputEncoding",
+      "Value": [
+        "",
+        "Preamble          : ",
+        "BodyName          : utf-8",
+        "EncodingName      : Unicode (UTF-8)",
+        "HeaderName        : utf-8",
+        "WebName           : utf-8",
+        "WindowsCodePage   : 1200",
+        "IsBrowserDisplay  : True",
+        "IsBrowserSave     : True",
+        "IsMailNewsDisplay : True",
+        "IsMailNewsSave    : True",
+        "IsSingleByte      : False",
+        "EncoderFallback   : System.Text.EncoderReplacementFallback",
+        "DecoderFallback   : System.Text.DecoderReplacementFallback",
+        "IsReadOnly        : True",
+        "CodePage          : 65001",
+        ""
+      ]
+    },
+    {
+      "Name": "PID",
+      "Value": "1102"
+    },
+    {
+      "Name": "PrimaryPersonAzurePrincipalId",
+      "Value": "8bc54b99-ac6d-43f7-a0e1-5fc7aad9e128"
+    },
+    {
+      "Name": "PrimaryPersonEmail",
+      "Value": "josh@c9cg.com"
+    },
+    {
+      "Name": "ProgressPreference",
+      "Value": "SilentlyContinue"
+    },
+    {
+      "Name": "PromptTimeout",
+      "Value": [
+        "",
+        "Days              : 0",
+        "Hours             : 0",
+        "Minutes           : 5",
+        "Seconds           : 0",
+        "Milliseconds      : 0",
+        "Ticks             : 3000000000",
+        "TotalDays         : 0.00347222222222222",
+        "TotalHours        : 0.0833333333333333",
+        "TotalMinutes      : 5",
+        "TotalSeconds      : 300",
+        "TotalMilliseconds : 300000",
+        ""
+      ]
+    },
+    {
+      "Name": "PromptTimeoutAction",
+      "Value": "Suppress"
+    },
+    {
+      "Name": "PSBoundParameters",
+      "Value": null
+    },
+    {
+      "Name": "PSCommandPath",
+      "Value": ""
+    },
+    {
+      "Name": "PSCulture",
+      "Value": ""
+    },
+    {
+      "Name": "PSDefaultParameterValues",
+      "Value": null
+    },
+    {
+      "Name": "PSEdition",
+      "Value": "Core"
+    },
+    {
+      "Name": "PSHOME",
+      "Value": "/home/site/wwwroot/runtimes/unix/lib/net8.0"
+    },
+    {
+      "Name": "PSModuleAutoLoadingPreference",
+      "Value": "None"
+    },
+    {
+      "Name": "PSScriptRoot",
+      "Value": ""
+    },
+    {
+      "Name": "PSUICulture",
+      "Value": ""
+    },
+    {
+      "Name": "PSVersionTable",
+      "Value": [
+        "",
+        "Name                           Value",
+        "----                           -----",
+        "PSVersion                      7.4.0",
+        "PSEdition                      Core",
+        "GitCommitId                    7.4.0",
+        "OS                             Debian GNU/Linux 12 (bookworm)",
+        "Platform                       Unix",
+        "PSCompatibleVersions           {1.0, 2.0, 3.0, 4.0…}",
+        "PSRemotingProtocolVersion      2.3",
+        "SerializationVersion           1.1.0.1",
+        "WSManStackVersion              3.0",
+        ""
+      ]
+    },
+    {
+      "Name": "RebootPreference",
+      "Value": "Suppress"
+    },
+    {
+      "Name": "report",
+      "Value": [
+        "",
+        "EnvironmentInfo",
+        "---------------",
+        "@{LanguageMode=ConstrainedLanguage; PSVersionTable=System.Management.Automation.PSVersionHashTable; OS=; PSModulePath=S…",
+        ""
+      ]
+    },
+    {
+      "Name": "ScriptName",
+      "Value": "C9SP-SentinelOne-ConfigTask-Get"
+    },
+    {
+      "Name": "ScriptVariables",
+      "Value": [
+        "",
+        "Key                           Value",
+        "---                           -----",
+        "method                        get",
+        "SoftwareName                  C9SP-SentinelOne",
+        "UpgradeCode                   ",
+        "DetectionString               ^Sentinel Agent$",
+        "AssignmentId                  1108",
+        "AssignmentType                Local",
+        "AssignmentScope               CrossTenant",
+        "DesiredState                  AnyVersion",
+        "ActionType                    TaskMonitor",
+        "RebootPreference              Suppress",
+        "PromptTimeoutAction           Suppress",
+        "AutoConsentToReboots          False",
+        "PromptTimeout                 00:05:00",
+        "MaintenanceTaskName           C9SP-SentinelOne-ConfigTask",
+        "ComputerName                  C9CG-2023-01",
+        "IsPortable                    True",
+        "IsServer                      False",
+        "DeviceId                      0c670dd5-0431-ec4c-afa1-a2913243cfd2",
+        "TenantName                    Cloud 9 Computing Group",
+        "TenantSlug                    C9CG",
+        "TenantId                      1",
+        "ShouldUseParentTenant         False",
+        "AzureTenantId                 c8b30f6e-a4a1-434d-a20e-d7d13efe3f0a",
+        "PrimaryPersonEmail            josh@c9cg.com",
+        "PrimaryPersonAzurePrincipalId 8bc54b99-ac6d-43f7-a0e1-5fc7aad9e128",
+        ""
+      ]
+    },
+    {
+      "Name": "SessionGroupID",
+      "Value": [
+        "",
+        "Guid",
+        "----",
+        "f9e55924-cead-44b9-9f5e-7f285ea9b5ea",
+        ""
+      ]
+    },
+    {
+      "Name": "SessionId",
+      "Value": "93957"
+    },
+    {
+      "Name": "SessionIsRepairing",
+      "Value": "False"
+    },
+    {
+      "Name": "ShellId",
+      "Value": "Microsoft.PowerShell"
+    },
+    {
+      "Name": "ShouldUseParentTenant",
+      "Value": "False"
+    },
+    {
+      "Name": "SoftwareName",
+      "Value": "C9SP-SentinelOne"
+    },
+    {
+      "Name": "TenantId",
+      "Value": "1"
+    },
+    {
+      "Name": "TenantName",
+      "Value": "Cloud 9 Computing Group"
+    },
+    {
+      "Name": "TenantSlug",
+      "Value": "C9CG"
+    },
+    {
+      "Name": "true",
+      "Value": "True"
+    },
+    {
+      "Name": "UpgradeCode",
+      "Value": null
+    },
+    {
+      "Name": "varList",
+      "Value": [
+        "",
+        "Name                             Value",
+        "----                             -----",
+        "?                                True",
+        "ActionId                         1203693",
+        "ActionName                       C9SP-SentinelOne-ConfigTask",
+        "ActionParameters                 ",
+        "ActionReason                     TaskMonitor",
+        "ActionResult                     Pending",
+        "ActionResultReason               ",
+        "ActionStatus                     PerformingAction",
+        "ActionType                       TaskMonitor",
+        "args                             ",
+        "AssignmentId                     1108",
+        "AssignmentScope                  CrossTenant",
+        "AssignmentType                   Local",
+        "AutoConsentToReboots             False",
+        "AzureTenantId                    c8b30f6e-a4a1-434d-a20e-d7d13efe3f0a",
+        "CanAccessParentTenant            True",
+        "Computer                         {, Id                                        : 78, Name                               …",
+        "ComputerName                     C9CG-2023-01",
+        "ConfirmPreference                High",
+        "DebugPreference                  SilentlyContinue",
+        "DesiredState                     AnyVersion",
+        "DetectionString                  ^Sentinel Agent$",
+        "DeviceId                         {, Guid, ----, 0c670dd5-0431-ec4c-afa1-a2913243cfd2…}",
+        "DynamicIntegrationTypeProperties ",
+        "EnabledExperimentalFeatures      ",
+        "envInfo                          {,        LanguageMode PSVersionTable,        ------------ --------------             …",
+        "Error                            ",
+        "ErrorActionPreference            Continue",
+        "ErrorView                        ConciseView",
+        "ExecutionContext                 {, Host           : System.Management.Automation.Internal.Host.InternalHost, Events   …",
+        "false                            False",
+        "FormatEnumerationLimit           4",
+        "HOME                             /home",
+        "Host                             {, Name             : ConsoleHost, Version          : 1.0, InstanceId       : 4bf5a8d4…",
+        "ImmyBotVersion                   {, Major         : 0, Minor         : 69, Patch         : 1…}",
+        "ImmyScriptPath                   194071a7afb94f6dbfaf298bca18be93",
+        "InformationPreference            SilentlyContinue",
+        "input                            ",
+        "IntegrationContext               ",
+        "IsPortable                       True",
+        "IsServer                         False",
+        "MaintenanceTaskName              C9SP-SentinelOne-ConfigTask",
+        "method                           get",
+        "MyInvocation                     {, MyCommand             : #Requires -Version 5.1,                         <#,        …",
+        "NestedPromptLevel                0",
+        "null                             ",
+        "OutputEncoding                   {, Preamble          : , BodyName          : utf-8, EncodingName      : Unicode (UTF-8…",
+        "PID                              1102",
+        "PrimaryPersonAzurePrincipalId    8bc54b99-ac6d-43f7-a0e1-5fc7aad9e128",
+        "PrimaryPersonEmail               josh@c9cg.com",
+        "ProgressPreference               SilentlyContinue",
+        "PromptTimeout                    {, Days              : 0, Hours             : 0, Minutes           : 5…}",
+        "PromptTimeoutAction              Suppress",
+        "PSBoundParameters                ",
+        "PSCommandPath                    ",
+        "PSCulture                        ",
+        "PSDefaultParameterValues         ",
+        "PSEdition                        Core",
+        "PSHOME                           /home/site/wwwroot/runtimes/unix/lib/net8.0",
+        "PSModuleAutoLoadingPreference    None",
+        "PSScriptRoot                     ",
+        "PSUICulture                      ",
+        "PSVersionTable                   {, Name                           Value, ----                           -----, PSVersi…",
+        "RebootPreference                 Suppress",
+        "report                           {, EnvironmentInfo, ---------------, @{LanguageMode=ConstrainedLanguage; PSVersionTabl…",
+        "ScriptName                       C9SP-SentinelOne-ConfigTask-Get",
+        "ScriptVariables                  {, Key                           Value, ---                           -----, method   …",
+        "SessionGroupID                   {, Guid, ----, f9e55924-cead-44b9-9f5e-7f285ea9b5ea…}",
+        "SessionId                        93957",
+        "SessionIsRepairing               False",
+        "ShellId                          Microsoft.PowerShell",
+        "ShouldUseParentTenant            False",
+        "SoftwareName                     C9SP-SentinelOne",
+        "TenantId                         1",
+        "TenantName                       Cloud 9 Computing Group",
+        "TenantSlug                       C9CG",
+        "true                             True",
+        "UpgradeCode                      ",
+        ""
+      ]
+    },
+    {
+      "Name": "VerbosePreference",
+      "Value": "Continue"
+    },
+    {
+      "Name": "WarningPreference",
+      "Value": "Continue"
+    },
+    {
+      "Name": "WhatIfPreference",
+      "Value": "False"
+    }
+  ],
+  "IntegrationContextDetail": {
+    "Exists": true
+  },
+  "ModuleImportTest": {
+    "ImportResult": "Success",
+    "ExportedCommands": [
+      "Connect-C9S1API",
+      "Get-C9S1Agent",
+      "Get-C9S1AgentPassphrase",
+      "Get-C9S1AvailablePackages",
+      "Get-C9S1Site",
+      "Invoke-C9S1RestMethod"
+    ]
+  }
+}
