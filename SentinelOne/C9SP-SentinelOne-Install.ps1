@@ -13,7 +13,7 @@
 .NOTES
     Author:     Josh Phillips
     Created:    07/15/2025
-    Version:    4.1.0 - Added robust installer log retrieval on failure.
+    Version:    4.2.0 - Replaced /LOG with stdout/stderr stream capture for robust logging.
 #>
 
 # =================================================================================
@@ -21,7 +21,7 @@
 # =================================================================================
 
 $ProgressPreference = 'SilentlyContinue'
-$VerbosePreference  = 'Continue'
+$VerbosePreference = 'Continue'
 
 try {
     Write-Verbose "--- C9-S1 Installation Metascript Started ---"
@@ -29,9 +29,7 @@ try {
     # Step 1: Get the site-specific installation token by calling the correct built-in cmdlet.
     Write-Verbose "Calling Get-IntegrationAgentInstallToken to retrieve site token..."
     $SiteToken = Get-IntegrationAgentInstallToken -ErrorAction Stop
-    if ([string]::IsNullOrWhiteSpace($SiteToken)) {
-        throw "Get-IntegrationAgentInstallToken did not return a site token. Check integration audit log."
-    }
+    if ([string]::IsNullOrWhiteSpace($SiteToken)) { throw "Get-IntegrationAgentInstallToken did not return a site token. Check integration audit log." }
     Write-Verbose "Successfully retrieved site token."
 
     # Step 2: Build the argument list for a modern EXE installer.
@@ -43,7 +41,7 @@ try {
             Write-Verbose "Version is 22.1. Using mandatory --dont_fail_on_config_preserving_failures flag."
             $ArgumentList = "--dont_fail_on_config_preserving_failures -t $SiteToken -f --qn"
         }
-        default {
+        default { # For all newer versions (22.2+).
             Write-Verbose "Version is 22.2 or newer. Using modern arguments."
             $ArgumentList = "-t $SiteToken -f --qn"
         }
@@ -53,15 +51,17 @@ try {
     # Step 3: Invoke the installation command on the endpoint.
     Write-Host "Invoking installer on the endpoint..."
     $result = Invoke-ImmyCommand -ScriptBlock {
+        # The installer and arguments are passed in from the Metascript.
         $InstallerPath = $using:InstallerFile
         $InstallerArgs = $using:ArgumentList
-        $logFile       = Join-Path $env:TEMP "s1_install_log.txt"
+        $stdoutLog = Join-Path $env:TEMP "s1_stdout_log.txt"
+        $stderrLog = Join-Path $env:TEMP "s1_stderr_log.txt"
 
         try {
-            $finalArgs = "$InstallerArgs /LOG=`"$logFile`""
-            Write-Host "Executing: `"$InstallerPath`" $finalArgs"
-            $process = Start-Process -FilePath $InstallerPath -ArgumentList $finalArgs -Wait -PassThru -NoNewWindow
-
+            Write-Host "Executing: `"$InstallerPath`" $InstallerArgs"
+            # Execute the installer and redirect its console output streams to our own log files.
+            $process = Start-Process -FilePath $InstallerPath -ArgumentList $InstallerArgs -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
+            
             if ($process.ExitCode -in @(0, 3010)) {
                 Write-Host "Installation appears successful (Exit Code: $($process.ExitCode))."
                 return $true
@@ -70,30 +70,36 @@ try {
             }
         } catch {
             # --- MODIFIED CATCH BLOCK ---
-            # On failure, read the S1 installer log and include it in the error.
+            # On failure, read the captured output streams and include them in the error.
             $originalError = $_.Exception.Message
-            $logContents   = "Installer log not found or was empty at `"$logFile`"."
+            $stdoutContents = "Standard Output log not found or was empty at `"$stdoutLog`"."
+            $stderrContents = "Standard Error log not found or was empty at `"$stderrLog`"."
 
-            if (Test-Path $logFile) {
-                $rawContent = Get-Content -Path $logFile -Raw -ErrorAction SilentlyContinue
-                if (-not [string]::IsNullOrWhiteSpace($rawContent)) {
-                    $logContents = $rawContent
-                }
+            if (Test-Path $stdoutLog) {
+                $rawContent = Get-Content -Path $stdoutLog -Raw -ErrorAction SilentlyContinue
+                if (-not [string]::IsNullOrWhiteSpace($rawContent)) { $stdoutContents = $rawContent }
             }
-
+            if (Test-Path $stderrLog) {
+                $rawContent = Get-Content -Path $stderrLog -Raw -ErrorAction SilentlyContinue
+                if (-not [string]::IsNullOrWhiteSpace($rawContent)) { $stderrContents = $rawContent }
+            }
+            
+            # Construct a detailed, multi-line error message to throw back to the ImmyBot console.
             $detailedErrorMessage = @"
-A fatal error occurred during installation on the endpoint. Original Error: $originalError
+A fatal error occurred during installation on the endpoint.
+Original Error: $originalError
 
---- SentinelOne Installer Log Contents ---
-$logContents
+--- Installer Standard Output (stdout) ---
+$stdoutContents
+
+--- Installer Standard Error (stderr) ---
+$stderrContents
 "@
             throw $detailedErrorMessage
         }
     }
 
-    if ($result) {
-        Write-Host "[SUCCESS] Installation Metascript completed successfully."
-    }
+    if ($result) { Write-Host "[SUCCESS] Installation Metascript completed successfully." }
 
 } catch {
     $errorMessage = "A fatal error occurred in the Installation Metascript: $($_.Exception.Message)"
