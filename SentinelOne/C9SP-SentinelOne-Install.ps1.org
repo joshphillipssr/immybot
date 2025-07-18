@@ -49,7 +49,7 @@ try
 }
 
 Write-Host "Using site $($Site.name) with registrationToken: $($site.registrationToken)"
-Write-Host ($Site | fl * | Out-String)
+Write-Host ($Site | Format-List * | Out-String)
 
 $LicenseValue = $site.registrationToken
 
@@ -65,7 +65,7 @@ if($GroupNameOverride)
     $Group | Should-HaveOne "Group with name $GroupNameOverride"
     if(!$Group.registrationToken){
         if($site.registrationToken){
-            throw "$($Site.name) has a registration token but $($Site.name)->$($Group.name) does not have a registration token. Are you sure this group is setup correctly in SentinelOne?`r`n$($Group | fl * | Out-String)"
+            throw "$($Site.name) has a registration token but $($Site.name)->$($Group.name) does not have a registration token. Are you sure this group is setup correctly in SentinelOne?`r`n$($Group | Format-List * | Out-String)"
         }
         throw "Neither site $($Site.name) nor group $($Group.name) have a registration token."
     }
@@ -265,5 +265,5 @@ Invoke-ImmyCommand -Timeout 900 {
 }
 Write-Host "Attempting to get AgentUUID from Registry"
 $JWT = Get-WindowsRegistryValue -Path "HKLM:\SOFTWARE\Sentinel Labs\State" -Name authCookie
-$AgentUuid = ConvertFrom-Base64Url ($JWT -split '\.')[0] | ConvertFrom-JSON | select -Expand u
+$AgentUuid = ConvertFrom-Base64Url ($JWT -split '\.')[0] | ConvertFrom-JSON | Select-Object -ExpandProperty u
 Write-Host "AgentUuid: $AgentUuid"
