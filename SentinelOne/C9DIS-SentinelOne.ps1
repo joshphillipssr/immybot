@@ -1,3 +1,5 @@
+# Version: 20250721-01
+
 # Cloud 9 Dynamic Integration Script for SentinelOne
 
 $Integration = New-DynamicIntegration -Init { # Runs every 20 minutes
@@ -9,23 +11,13 @@ $Integration = New-DynamicIntegration -Init { # Runs every 20 minutes
         $S1ApiKey
     )
     Write-Host "--- [INIT] Script Initializing: $(Get-Date) ---"
-    $providerTypeFormData | Write-Variable
-    Import-Module SentinelOne
-    Get-Command -Module SentinelOne | Out-String | Write-Host
-    $S1AuthHeader = Connect-S1API -S1Uri $S1Uri -S1APIToken $S1ApiKey
+    Import-Module C9SentinelOne
+    $S1AuthHeader = Connect-C9S1API -S1Uri $S1Uri -S1APIToken $S1ApiKey -Verbose
     
-    # Import the module containing our helper functions.
-    # Import-Module C9SentinelOne
-    
-    # Call the refactored Connect function. It will validate credentials and return the auth header on success, or throw on failure.
-    # $S1AuthHeader = Connect-C9S1API -S1Uri $S1Uri -S1APIToken $S1ApiKey -Verbose
-
-    # Populate the persistent integration context. This is the ONLY place this should happen.
     $IntegrationContext.S1Uri = $S1Uri
     $IntegrationContext.S1ApiKey = $S1ApiKey
     $IntegrationContext.AuthHeader = $S1AuthHeader
 
-    # Signal success to the ImmyBot platform.
     [OpResult]::Ok()
     
 } -HealthCheck { #Runs every minute
@@ -33,17 +25,10 @@ $Integration = New-DynamicIntegration -Init { # Runs every 20 minutes
     [OutputType([HealthCheckResult])]
     param()
     Write-Host "--- [HEALTHCHECK] Running: $(Get-Date) ---"
-
     try {
-        # This capability must be self-contained.
         Import-Module C9SentinelOne
-
         Write-Verbose "Performing lightweight health check by calling system/info endpoint..."
-        
-        # This function will use the pre-authenticated context from -Init.
-        # We don't need the result, we just need to know if the call succeeds.
         Invoke-C9S1RestMethod -Endpoint 'system/info' -Verbose -ErrorAction Stop | Out-Null
-
         Write-Verbose "Health check PASSED. API is responsive."
         return New-HealthyResult
     }
@@ -53,8 +38,19 @@ $Integration = New-DynamicIntegration -Init { # Runs every 20 minutes
         return New-UnhealthyResult -Message $errorMessage
     }
 }
-# I've started building the new capability here with what I know
-$Integration | Add-DynamicIntegrationCapability -Interface ISupportsAuthenticatedDownload 
+
+# --- AUTHENTICATED DOWNLOAD CAPABILITY ---
+# This is the newly discovered, mandatory capability for authenticated downloads.
+$Integration | Add-DynamicIntegrationCapability -Interface ISupportsAuthenticatedDownload -GetAuthHeader {
+    [CmdletBinding()]
+    [OutputType([System.Collections.Hashtable])]
+    param()
+
+    # This capability's only job is to return the pre-existing authentication header
+    # that was created and stored in the -Init block.
+    Write-Verbose "C9DI-SentinelOne: -GetAuthHeader capability invoked."
+    return $IntegrationContext.AuthHeader
+}
 
 # Gets list of all tenants from S1 API
 $Integration | Add-DynamicIntegrationCapability -Interface ISupportsListingClients -GetClients {
@@ -62,7 +58,6 @@ $Integration | Add-DynamicIntegrationCapability -Interface ISupportsListingClien
     [OutputType([Immybot.Backend.Domain.Providers.IProviderClientDetails[]])]
     param()
     Write-Host "--- [GET-CLIENTS] Running: $(Get-Date) ---"
-    # Return a list of clients for this integration using the New-IntegrationClient cmdlet
     Import-Module C9SentinelOne
     Get-C9S1Site -Verbose | ForEach-Object {
         if ($_.state -eq "active") {
@@ -92,7 +87,6 @@ $Integration | Add-DynamicIntegrationCapability -Interface ISupportsListingAgent
             -AgentVersion $_.agentVersion `
             -SupportsRunningScripts $false `
             -SupportsOnlineStatus $false
-            
     }
 }
 
@@ -105,7 +99,7 @@ $Integration |  Add-DynamicIntegrationCapability -Interface ISupportsTenantInsta
         [string]$clientId
     )
     Import-Module C9SentinelOne
-    Get-C9S1Site -Id $clientId | %{ $_.registrationToken}
+    Get-C9S1Site -Id $clientId | ForEach-Object{ $_.registrationToken}
 }
 
 # Deletes an offline agent from S1 API
@@ -117,9 +111,7 @@ $Integration |  Add-DynamicIntegrationCapability -Interface ISupportsTenantInsta
             [Immybot.Backend.Domain.Providers.IProviderAgentDetails]$agent
     )
     Write-Host "--- [DELETE-AGENT] Running: $(Get-Date) ---"
-
-    return "implement me"
-
+    # return "implement me" # Commenting out placeholder to ensure script validity
 }
 
 $Integration | Add-DynamicIntegrationCapability -Interface ISupportsDynamicVersions -GetDynamicVersions {
@@ -129,23 +121,14 @@ $Integration | Add-DynamicIntegrationCapability -Interface ISupportsDynamicVersi
         [Parameter(Mandatory = $True)]
         [System.String]$ExternalClientId
     )
-
-    # Import our module to make the new function available.
     Import-Module C9SentinelOne
-
-    # Call our new function to get the grouped package data.
     $GroupedPackages = Get-C9S1AvailablePackages
-
-    # Now, process the results and create the DynamicVersion objects.
     foreach ($group in $GroupedPackages.GetEnumerator()) {
         $versionData = $group.Value
-
         if ($versionData.EXE) {
-            # Priority 1: Use the EXE installer.
             New-DynamicVersion -Url $versionData.EXE.link -Version $versionData.Version -FileName $versionData.EXE.fileName -Architecture $versionData.Architecture -PackageType Executable
         }
         elseif ($versionData.MSI) {
-            # Priority 2: Fall back to the MSI installer.
             New-DynamicVersion -Url $versionData.MSI.link -Version $versionData.Version -FileName $versionData.MSI.fileName -Architecture $versionData.Architecture -PackageType MSI
         }
     }
@@ -155,19 +138,11 @@ $Integration | Add-DynamicIntegrationCapability -Interface ISupportsTenantUninst
     [CmdletBinding()]
     [OutputType([System.String])]
     param(
-        # This $clientId is the S1 Site ID, provided automatically by the ImmyBot framework.
         [Parameter(Mandatory=$true)]
         [string]$clientId
     )
-
-    # Import our module to make the API functions available.
     Import-Module C9SentinelOne
-
-    # Call the Get-S1Site function to get the full site object from the API.
-    $siteObject = Get-S1Site -Id $clientId
-    
-    # Extract and return the 'passphrase' property from the site object.
-    # If the property doesn't exist, this will correctly return $null.
+    $siteObject = Get-C9S1Site -Id $clientId
     return $siteObject.passphrase
 }
 
@@ -176,25 +151,77 @@ $Integration | Add-DynamicIntegrationCapability -Interface ISupportsAgentUninsta
     [CmdletBinding()]
     [OutputType([System.String])]
     param(
-        # This $agentId is provided automatically by the ImmyBot framework for the target computer.
         [Parameter(Mandatory=$true)]
         [string]$agentId
     )
-
     Write-Verbose "GetAgentUninstallToken capability received agentId: $agentId"
-    # Import our module to make the new function available.
     Import-Module C9SentinelOne
-
-    # Call our new, dedicated function to get the passphrase for the given Agent ID.
     $passphrase = Get-C9S1AgentPassphrase -AgentId $agentId
-    
-    # Return the passphrase. ImmyBot will handle providing this to the maintenance script.
     return $passphrase
 }
 
 $Integration | Add-DynamicIntegrationCapability -Interface ISupportsInventoryIdentification -GetInventoryScript {
     [CmdletBinding()]
     param()
+
+    # Your harness code adapted for this context
+    $report = New-Object -TypeName PSObject
+    $VerbosePreference = 'Continue'
+    
+    try {
+        # Phase 1: Environment Info
+        $envInfo = New-Object -TypeName PSObject
+        Add-Member -InputObject $envInfo -MemberType NoteProperty -Name 'LanguageMode' -Value $ExecutionContext.SessionState.LanguageMode
+        Add-Member -InputObject $envInfo -MemberType NoteProperty -Name 'PSVersionTable' -Value $PSVersionTable
+        Add-Member -InputObject $envInfo -MemberType NoteProperty -Name 'CurrentLocation' -Value (Get-Location)
+        Add-Member -InputObject $report -MemberType NoteProperty -Name 'EnvironmentInfo' -Value $envInfo
+        
+        # Phase 2: Variable Inspection (most important!)
+        $varList = @()
+        $allVars = Get-Variable
+        foreach ($var in $allVars) {
+            $varDetail = New-Object -TypeName PSObject
+            Add-Member -InputObject $varDetail -MemberType NoteProperty -Name 'Name' -Value $var.Name
+            Add-Member -InputObject $varDetail -MemberType NoteProperty -Name 'Value' -Value ($var.Value | Out-String -Stream)
+            $varList += $varDetail
+        }
+        Add-Member -InputObject $report -MemberType NoteProperty -Name 'AvailableVariables' -Value $varList
+        
+        # Phase 3: Integration Context
+        $contextDetail = New-Object -TypeName PSObject
+        if (Get-Variable -Name 'IntegrationContext' -ErrorAction SilentlyContinue) {
+            Add-Member -InputObject $contextDetail -MemberType NoteProperty -Name 'Exists' -Value $true
+            foreach ($key in $IntegrationContext.Keys) {
+                Add-Member -InputObject $contextDetail -MemberType NoteProperty -Name $key -Value $IntegrationContext[$key]
+            }
+        } else {
+            Add-Member -InputObject $contextDetail -MemberType NoteProperty -Name 'Exists' -Value $false
+        }
+        Add-Member -InputObject $report -MemberType NoteProperty -Name 'IntegrationContext' -Value $contextDetail
+        
+        # Phase 4: Test if Invoke-ImmyCommand actually works here
+        $immyCommandTest = New-Object -TypeName PSObject
+        try {
+            $result = Invoke-ImmyCommand {
+                "I ran on an endpoint at $(Get-Date)"
+            }
+            Add-Member -InputObject $immyCommandTest -MemberType NoteProperty -Name 'Success' -Value $true
+            Add-Member -InputObject $immyCommandTest -MemberType NoteProperty -Name 'Result' -Value $result
+        } catch {
+            Add-Member -InputObject $immyCommandTest -MemberType NoteProperty -Name 'Success' -Value $false
+            Add-Member -InputObject $immyCommandTest -MemberType NoteProperty -Name 'Error' -Value $_.Exception.Message
+        }
+        Add-Member -InputObject $report -MemberType NoteProperty -Name 'InvokeImmyCommandTest' -Value $immyCommandTest
+        
+    } catch {
+        Add-Member -InputObject $report -MemberType NoteProperty -Name 'FATAL_ERROR' -Value $_.Exception.Message
+    }
+    
+    # Log the harness output for analysis
+    Write-Host "=== HARNESS REPORT ==="
+    Write-Host ($report | ConvertTo-Json -Depth 10)
+    Write-Host "=== END HARNESS ==="
+
     Invoke-ImmyCommand {
         try {
             $path = Resolve-Path "C:\Program Files\SentinelOne\Sentinel Agent*\SentinelCtl.exe" -ErrorAction Stop
@@ -202,9 +229,7 @@ $Integration | Add-DynamicIntegrationCapability -Interface ISupportsInventoryIde
             Write-Warning "Path not found: $_"
             return
         }
-
         if (!$path) { return }
-        
         . $path.Path agent_id
     }
 }

@@ -1,4 +1,4 @@
-# Version: 20250721-02
+# Version: 20250721-03
 
 # Helper functions
 
@@ -189,11 +189,12 @@ function Get-C9S1Site {
         $Endpoint += "/$id"
         Invoke-C9S1RestMethod -Endpoint $Endpoint
         # Potential issue Number 4. Need to test implimenting the following change:
-        return # Invoke-C9S1RestMethod -Endpoint $Endpoint
+        return Invoke-C9S1RestMethod -Endpoint $Endpoint
+        # org: return
     }
 
     $QueryParameters = @{}
-    $LimitParameter = @{ limit = 100 }
+    $LimitParameter = @{ limit = 100 } # We only have 10 sites. This is fine.
 
     if ($Name) {
         $QueryParameters['name'] = $Name
@@ -204,34 +205,35 @@ function Get-C9S1Site {
     # Potential issue Number 5. Need to test implimenting the following change:
     # The API response for sites is { "data": { "sites": [...] } }
     # Invoke-C9S1RestMethod already expands 'data', so we just need to expand 'sites'
-    # $Sites = (Invoke-C9S1RestMethod -Endpoint "sites" -QueryParameters $CombinedParameters).sites
-    # if (-not $Name) {
-        # If no name filter, return all active sites, sorted
-    #    return $Sites | Sort-Object name
-    # } else {
-        # If a name filter was used, perform an exact match on the results
-    #    $ExactMatch = $Sites | Where-Object { $_.name.Trim() -eq $Name }
-    #    return $ExactMatch
-    # }
-
+    $Sites = (Invoke-C9S1RestMethod -Endpoint "sites" -QueryParameters $CombinedParameters).sites
+    
     if (-not $Name) {
-        Invoke-C9S1RestMethod -Endpoint $Endpoint -QueryParameters $LimitParameter | Select-Object -Expand sites | Sort-Object name
-    } else {
-        $Sites = Invoke-C9S1RestMethod -Endpoint $Endpoint -QueryParameters $CombinedParameters | Select-Object -Expand sites
-        if (-not $Sites) {
-            Write-Progress "No sites matched name: $Name using API filter. Fetching all sites..."
-            $Sites = Invoke-C9S1RestMethod -Endpoint $Endpoint -QueryParameters $LimitParameter | Select-Object -Expand sites | Sort-Object name
-            $SiteCount = $Sites | Measure-Object | Select-Object -expand Count
-            Write-Progress "Found $SiteCount site(s)"
-        }
-        if ($Agents.PSObject.Properties.Name -contains 'data') {
-            return $Agents.data
-        } else {
-            return $Agents
-        }
-        $Site = $Sites | Where-Object { $_.name.Trim() -eq $Name } # Potential edge case where the `name` property includes whitespace
-        $Site
-    }
+        # If no name filter, return all active sites, sorted
+        return $Sites | Sort-Object name
+     } else {
+        # If a name filter was used, perform an exact match on the results
+        $ExactMatch = $Sites | Where-Object { $_.name.Trim() -eq $Name }
+        return $ExactMatch
+     }
+
+    #org: if (-not $Name) {
+    #org:     Invoke-C9S1RestMethod -Endpoint $Endpoint -QueryParameters $LimitParameter | Select-Object -Expand sites | Sort-Object name
+    #org: } else {
+    #org:     $Sites = Invoke-C9S1RestMethod -Endpoint $Endpoint -QueryParameters $CombinedParameters | Select-Object -Expand sites
+    #org:     if (-not $Sites) {
+    #org:         Write-Progress "No sites matched name: $Name using API filter. Fetching all sites..."
+    #org:         $Sites = Invoke-C9S1RestMethod -Endpoint $Endpoint -QueryParameters $LimitParameter | Select-Object -Expand sites | Sort-Object name
+    #org:         $SiteCount = $Sites | Measure-Object | Select-Object -expand Count
+    #org:         Write-Progress "Found $SiteCount site(s)"
+    #org:     }
+    #org:     if ($Agents.PSObject.Properties.Name -contains 'data') {
+    #org:         return $Agents.data
+    #org:     } else {
+    #org:         return $Agents
+    #org:     }
+    #org:     $Site = $Sites | Where-Object { $_.name.Trim() -eq $Name } # Potential edge case where the `name` property includes whitespace
+    #org:     $Site
+    #org: }
 }
 
 function Get-C9S1Agent {
@@ -247,55 +249,57 @@ function Get-C9S1Agent {
     $LimitParameter = @{ limit = 1000 }
 
     if ($Name) {
-        $QueryParameters['name'] = $Name
         # Potential issue Number 1. Need to test implenting the following change:
         # Using 'computerName__contains' for a more flexible search
-        # $QueryParameters['computerName__contains'] = $Name
+        $QueryParameters['computerName__contains'] = $Name
+        # org: $QueryParameters['name'] = $Name
     }
     if($SiteId){
-        $QueryParameters['siteid'] = $SiteId
         # Potential issue Number 2. Need to test implimenting the following change:
         # The API expects 'siteIds' (plural) as a comma-separated string
-        # $QueryParameters['siteIds'] = $SiteId -join ','
+        $QueryParameters['siteIds'] = $SiteId -join ','
+        # org: $QueryParameters['siteid'] = $SiteId
     }
 
     $CombinedParameters = $QueryParameters + $LimitParameter
 
     # Potential issue Number 3. Need to test implimenting the following change:
     # The API returns an array directly when successful, so we don't need to expand 'agents'
-    # $Agents = Invoke-C9S1RestMethod -Endpoint $Endpoint -QueryParameters $CombinedParameters
-    # if (-not $Name) {
-        # If no name filter was specified, return all agents sorted by name
-    #    return $Agents | Sort-Object computerName             
-    # } else {
-        # If a name filter was used, perform an exact match on the results
-    #    $ExactMatch = $Agents | Where-Object { $_.computerName -eq $Name }
-    #    if ($ExactMatch.Count -gt 1) {
-    #        Write-Warning "Found multiple agents with the exact name '$Name'. Returning the first one found."
-    #        return $ExactMatch[0]
-    #    }
-    #    return $ExactMatch
-
+    $Agents = Invoke-C9S1RestMethod -Endpoint $Endpoint -QueryParameters $CombinedParameters
+    
     if (-not $Name) {
-        Invoke-C9S1RestMethod -Endpoint $Endpoint -QueryParameters $LimitParameter | Sort-Object computerName             
-    } else {
-        $QueryParameters.name = $Name
-        $Agents = Invoke-C9S1RestMethod -Endpoint $Endpoint -QueryParameters $CombinedParameters
-        if (-not $Agents) {
-            Write-Progress "No Agents matched name: $Name using API filter. Fetching all Agents..."
-            $Agents = Get-C9S1Site
-            $AgentCount = $Agents | Measure-Object | Select-Object -expand Count
-            Write-Progress "Found $AgentCount agent(s)"
+        # If no name filter was specified, return all agents sorted by name
+        return $Agents | Sort-Object computerName             
+     } else {
+        # If a name filter was used, perform an exact match on the results
+        $ExactMatch = $Agents | Where-Object { $_.computerName -eq $Name }
+        if ($ExactMatch.Count -gt 1) {
+            Write-Warning "Found multiple agents with the exact name '$Name'. Returning the first one found."
+            return $ExactMatch[0]
         }
-        if ($Agents.PSObject.Properties.Name -contains 'data') {
-            return $Agents.data
-        } else {
-            return $Agents
-        }
-        $Agent = $Agent | Where-Object { $_.name.Trim() -eq $Name } # Potential edge case where the `name` property includes whitespace
-        $Agent = $Agent | Should-HaveOne "SentinelOne Agent matching $Name" -TakeFirst
-        $Agent
-    }
+        return $ExactMatch
+     }
+    # org: if (-not $Name) {
+    # org:     Invoke-C9S1RestMethod -Endpoint $Endpoint -QueryParameters $LimitParameter | Sort-Object computerName             
+    # org: } else {
+    # org:     $QueryParameters.name = $Name
+    # org:     $Agents = Invoke-C9S1RestMethod -Endpoint $Endpoint -QueryParameters $CombinedParameters
+    # org:     if (-not $Agents) {
+    # org:         Write-Progress "No Agents matched name: $Name using API filter. Fetching all Agents..."
+    # org:         $Agents = Get-C9S1Site
+    # org:         $AgentCount = $Agents | Measure-Object | Select-Object -expand Count
+    # org:         Write-Progress "Found $AgentCount agent(s)"
+    # org:     }
+    # org:     if ($Agents.PSObject.Properties.Name -contains 'data') {
+    # org:         return $Agents.data
+    # org:     } else {
+    # org:         return $Agents
+    # org:     }
+    
+    # org:     $Agent = $Agent | Where-Object { $_.name.Trim() -eq $Name } # Potential edge case where the `name` property includes whitespace
+    # org:     $Agent = $Agent | Should-HaveOne "SentinelOne Agent matching $Name" -TakeFirst
+    # org:     $Agent
+    # org: }
 }
 
 function Get-C9S1AvailablePackages {
