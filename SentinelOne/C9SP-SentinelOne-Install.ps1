@@ -1,4 +1,3 @@
-#Requires -Version 5.1
 <#
 .SYNOPSIS
     The definitive installation script for the C9SP-SentinelOne software package.
@@ -8,7 +7,7 @@
 .NOTES
     Author:     Josh Phillips
     Created:    07/15/2025
-    Version:    4.4.0 - Added preflight logic
+    Version:    20250721-01
 #>
 
 # =================================================================================
