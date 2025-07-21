@@ -7,11 +7,10 @@
     configuration of a SentinelOne agent directly on an endpoint. It is designed to run in the
     local System context and contains no cloud-facing or API-related logic.
 
-    All functions are built upon the discoveries from ticket T20250611.0014, ensuring they are
-    robust and account for known failure modes. Version 2.0 refactors presence checks into
-    atomic functions for more precise analysis by consuming scripts.
+    Unlike the metascript context which runs in Powershell Core ConstrainedLanguage mode, this module
+    is intended for use in the local System context where it runs in Powershell 5.1 Full Language mode.
 .NOTES
-    Author:     Josh Phillips (Consulting) & C9.AI
+    Author:     Josh Phillips
     Created:    07/15/2025
     Version:    2.0.0
 #>

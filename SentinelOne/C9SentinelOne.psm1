@@ -1,3 +1,84 @@
+# Version: 20250721-02
+
+# Helper functions
+
+function Get-C9S1LocalAgentId {
+    [CmdletBinding()]
+    param()
+
+    Write-Verbose "Attempting to retrieve SentinelOne Agent ID from the local endpoint."
+    try {
+        # This scriptblock runs on the endpoint as SYSTEM.
+        # It's self-contained and has one job: get the agent ID.
+        $result = Invoke-ImmyCommand -ScriptBlock {
+            # Use Resolve-Path for robustly finding the executable
+            $sentinelCtlPath = Resolve-Path "C:\Program Files\SentinelOne\Sentinel Agent*\SentinelCtl.exe" -ErrorAction SilentlyContinue
+            if (-not $sentinelCtlPath) {
+                Write-Warning "SentinelCtl.exe not found on the endpoint."
+                # Return null explicitly if the exe isn't found
+                return $null
+            }
+            
+            # Execute the command to get the agent ID.
+            # We trim to ensure no leading/trailing whitespace.
+            $agentId = (& $sentinelCtlPath.Path agent_id).Trim()
+            return $agentId
+        }
+
+        if ([string]::IsNullOrWhiteSpace($result)) {
+            Write-Verbose "No local Agent ID was found."
+            return $null
+        }
+
+        Write-Verbose "Successfully retrieved local Agent ID: $result"
+        return $result
+    }
+    catch {
+        Write-Warning "An error occurred while trying to retrieve the local Agent ID: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Test-C9S1LocalUpgradeAuthorization {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$AgentId
+    )
+
+    $endpoint = "agents/$AgentId/local-upgrade-authorization"
+    Write-Verbose "Checking API endpoint '$endpoint' for agent protection status."
+
+    try {
+        # We expect a successful call to return data with an 'enabled' property.
+        $response = Invoke-C9S1RestMethod -Endpoint $endpoint
+        
+        # The API returns { "data": { "enabled": true/false } } on success
+        if ($null -ne $response.enabled -and $response.enabled) {
+            Write-Verbose "API Response: Local upgrade authorization is ENABLED."
+            return $true
+        }
+        else {
+            Write-Verbose "API Response: Local upgrade authorization is DISABLED."
+            return $false
+        }
+    }
+    catch {
+        # Check if the error is specifically a 404 Not Found, which indicates a ghost agent.
+        if ($_.Exception.Response.StatusCode -eq [System.Net.HttpStatusCode]::NotFound) {
+            Write-Warning "Agent ID '$AgentId' returned a 404 (Not Found) from the API. This is a ghost agent."
+            # We throw a specific string that the calling function can catch and interpret.
+            throw "GHOST_AGENT"
+        }
+        
+        # For any other API error, we log it and assume it's not protected as a failsafe.
+        Write-Warning "An unexpected API error occurred while checking local upgrade authorization: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+# Exported Functions
+
 function Connect-C9S1API {
     [CmdletBinding()]
     param(
@@ -76,6 +157,7 @@ function Invoke-C9S1RestMethod {
             }
             Write-Verbose $UriWithQuery
             $Results = $null
+            Write-Verbose "Executing API call to final constructed URI: $UriWithQuery"
             Invoke-RestMethod -Uri $UriWithQuery -Headers $AuthHeader @params -ErrorAction Stop | Tee-Object -Variable Results | Select-Object -Expand data 
             $Results | Format-List * | Out-String | Write-Verbose
             
@@ -106,7 +188,8 @@ function Get-C9S1Site {
     if ($Id) {
         $Endpoint += "/$id"
         Invoke-C9S1RestMethod -Endpoint $Endpoint
-        return
+        # Potential issue Number 4. Need to test implimenting the following change:
+        return # Invoke-C9S1RestMethod -Endpoint $Endpoint
     }
 
     $QueryParameters = @{}
@@ -117,6 +200,19 @@ function Get-C9S1Site {
     }
     $QueryParameters['state'] = 'active'
     $CombinedParameters = $QueryParameters + $LimitParameter
+
+    # Potential issue Number 5. Need to test implimenting the following change:
+    # The API response for sites is { "data": { "sites": [...] } }
+    # Invoke-C9S1RestMethod already expands 'data', so we just need to expand 'sites'
+    # $Sites = (Invoke-C9S1RestMethod -Endpoint "sites" -QueryParameters $CombinedParameters).sites
+    # if (-not $Name) {
+        # If no name filter, return all active sites, sorted
+    #    return $Sites | Sort-Object name
+    # } else {
+        # If a name filter was used, perform an exact match on the results
+    #    $ExactMatch = $Sites | Where-Object { $_.name.Trim() -eq $Name }
+    #    return $ExactMatch
+    # }
 
     if (-not $Name) {
         Invoke-C9S1RestMethod -Endpoint $Endpoint -QueryParameters $LimitParameter | Select-Object -Expand sites | Sort-Object name
@@ -148,16 +244,37 @@ function Get-C9S1Agent {
     $Endpoint = "agents"
     
     $QueryParameters = @{}
-    $LimitParameter = @{ limit = 100 }
+    $LimitParameter = @{ limit = 1000 }
 
     if ($Name) {
         $QueryParameters['name'] = $Name
+        # Potential issue Number 1. Need to test implenting the following change:
+        # Using 'computerName__contains' for a more flexible search
+        # $QueryParameters['computerName__contains'] = $Name
     }
     if($SiteId){
         $QueryParameters['siteid'] = $SiteId
+        # Potential issue Number 2. Need to test implimenting the following change:
+        # The API expects 'siteIds' (plural) as a comma-separated string
+        # $QueryParameters['siteIds'] = $SiteId -join ','
     }
 
     $CombinedParameters = $QueryParameters + $LimitParameter
+
+    # Potential issue Number 3. Need to test implimenting the following change:
+    # The API returns an array directly when successful, so we don't need to expand 'agents'
+    # $Agents = Invoke-C9S1RestMethod -Endpoint $Endpoint -QueryParameters $CombinedParameters
+    # if (-not $Name) {
+        # If no name filter was specified, return all agents sorted by name
+    #    return $Agents | Sort-Object computerName             
+    # } else {
+        # If a name filter was used, perform an exact match on the results
+    #    $ExactMatch = $Agents | Where-Object { $_.computerName -eq $Name }
+    #    if ($ExactMatch.Count -gt 1) {
+    #        Write-Warning "Found multiple agents with the exact name '$Name'. Returning the first one found."
+    #        return $ExactMatch[0]
+    #    }
+    #    return $ExactMatch
 
     if (-not $Name) {
         Invoke-C9S1RestMethod -Endpoint $Endpoint -QueryParameters $LimitParameter | Sort-Object computerName             
@@ -181,9 +298,159 @@ function Get-C9S1Agent {
     }
 }
 
+function Get-C9S1AvailablePackages {
+    <#
+    .SYNOPSIS
+        Fetches all available GA agent packages from the S1 API and prioritizes EXE over MSI.
+    .DESCRIPTION
+        This function queries the S1 API for all available Windows agent installers, groups them
+        by version and architecture, and returns a structured object. It is designed to be called
+        by the Dynamic Integration's -GetVersions capability.
+    #>
+    [CmdletBinding()]
+    param()
+
+    # This function assumes the $IntegrationContext is already populated.
+    $QueryParameters = @{
+        limit          = 50; status = 'ga'; sortBy = 'version'; sortOrder = 'desc';
+        osTypes        = 'windows'; fileExtensions = '.exe,.msi'; osArches = '64 bit,32 bit,ARM64'
+    }
+
+    # This now works because Invoke-C9S1RestMethod will use the credentials from the context.
+    $DownloadLinks = Invoke-C9S1RestMethod -Endpoint "update/agent/packages" -QueryParameters $QueryParameters
+    Write-Verbose "Retrieved $($DownloadLinks.Count) package links. Now grouping and prioritizing..."
+
+    # Your proven logic for grouping and prioritizing .exe over .msi remains unchanged.
+    $GroupedVersions = [ordered]@{}
+    foreach ($link in $DownloadLinks) {
+        if ($link.fileName -like "storage-agent-installer*") { continue }
+        $Version = [Version]$link.Version
+        $FileArchitecture = switch ($link.OsArch) {
+            '64 bit' { "X64" }
+            '32 bit' { "X86" }
+            'ARM64'  { 'ARM64' }
+            default  { continue }
+        }
+        $GroupKey = "$Version-$FileArchitecture"
+        if (-not $GroupedVersions[$GroupKey]) {
+            $GroupedVersions[$GroupKey] = @{ Version = $Version; Architecture = $FileArchitecture; EXE = $null; MSI = $null }
+        }
+        if ($link.fileExtension -eq '.exe') { $GroupedVersions[$GroupKey].EXE = $link }
+        elseif ($link.fileExtension -eq '.msi') { $GroupedVersions[$GroupKey].MSI = $link }
+    }
+    
+    # Return the fully grouped data for the integration to process.
+    return $GroupedVersions
+}
+
+function Get-C9S1AgentPassphrase {
+    <#
+    .SYNOPSIS
+        Retrieves the uninstall passphrase for a specific SentinelOne agent using its UUID.
+    .DESCRIPTION
+        This function calls the /agents/passphrases API endpoint, using the agent's UUID
+        as a direct query parameter. This is the most efficient method for retrieving the
+        passphrase for a known agent.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        # This AgentId is the UUID provided by the ImmyBot framework from the inventory script.
+        [Parameter(Mandatory = $true)]
+        [string]$AgentId
+    )
+
+    try {
+        # Construct the query parameters using the agent's UUID.
+        $queryParameters = @{
+            uuid = $AgentId
+        }
+
+        Write-Verbose "Querying passphrase endpoint with Agent UUID: $AgentId..."
+        $response = Invoke-C9S1RestMethod -Endpoint "agents/passphrases" -QueryParameters $queryParameters
+        
+        # The response is an array inside the 'data' property. We take the first item.
+        if ($response -and $response.Count -gt 0) {
+            Write-Verbose "Successfully retrieved passphrase."
+            return $response[0].passphrase
+        }
+    
+        Write-Warning "Passphrase endpoint returned no data for UUID: $AgentId"
+        return $null
+
+    } catch {
+        Write-Error "An error occurred during the passphrase retrieval process: $($_.Exception.Message)"
+        throw
+    }
+}
+
+function Test-S1InstallPreFlight {
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param()
+
+    Write-Verbose "Starting SentinelOne installation pre-flight check..."
+
+    try {
+        # Step 1: Get the local agent ID using our dedicated bridge function.
+        $localAgentId = Get-C9S1LocalAgentId
+        
+        # Step 2: Handle the "Not Installed" case. If no ID, we can proceed.
+        if (-not $localAgentId) {
+            return [PSCustomObject]@{
+                ShouldStop = $false
+                Reason     = 'SentinelOne not detected locally. Proceeding with installation.'
+            }
+        }
+
+        # Step 3: We have an ID. Now check its status against the API.
+        try {
+            $isProtected = Test-C9S1LocalUpgradeAuthorization -AgentId $localAgentId
+
+            # Step 4a: If protected, we MUST stop.
+            if ($isProtected) {
+                return [PSCustomObject]@{
+                    ShouldStop = $true
+                    Reason     = 'STOP: Agent is healthy and protected by a local upgrade/downgrade policy in the S1 portal.'
+                }
+            }
+            # Step 4b: If not protected, we can proceed.
+            else {
+                 return [PSCustomObject]@{
+                    ShouldStop = $false
+                    Reason     = 'Agent is online and not protected by a local upgrade policy. Proceeding with workflow.'
+                }
+            }
+        }
+        catch {
+            # Step 4c: Catch the specific "GHOST_AGENT" error from our helper function. This is a "go" condition.
+            if ($_ -eq 'GHOST_AGENT') {
+                return [PSCustomObject]@{
+                    ShouldStop = $false
+                    Reason     = 'Ghost Agent: Local ID found but does not exist in S1 portal. Proceeding with remediation.'
+                }
+            }
+            # If it was a different, unexpected error, re-throw it to be caught by the outer block.
+            throw $_
+        }
+    }
+    catch {
+        # This is a final catch-all for any other unexpected errors. It's safest to allow the installation
+        # to proceed but with a clear warning about the pre-flight check failure.
+        Write-Warning "An unexpected error occurred during the pre-flight check: $($_.Exception.Message). Defaulting to allow installation."
+        return [PSCustomObject]@{
+            ShouldStop = $false
+            Reason     = "An unexpected error occurred during pre-flight check: $($_.Exception.Message). Proceeding with workflow as a failsafe."
+        }
+    }
+}
+
 Export-ModuleMember -Function @(
     'Connect-C9S1API',
     'Invoke-C9S1RestMethod',
     'Get-C9S1Site',
-    'Get-C9S1Agent'
+    'Get-C9S1Agent',
+    'Get-C9S1AvailablePackages',
+    'Get-C9S1AgentPassphrase',
+    'Test-S1InstallPreFlight'
 )

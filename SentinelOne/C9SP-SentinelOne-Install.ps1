@@ -8,7 +8,7 @@
 .NOTES
     Author:     Josh Phillips
     Created:    07/15/2025
-    Version:    4.3.0 - Corrected try/catch/finally structure.
+    Version:    4.4.0 - Added preflight logic
 #>
 
 # =================================================================================
@@ -17,6 +17,25 @@
 
 $ProgressPreference = 'SilentlyContinue'
 $VerbosePreference = 'Continue'
+
+# Preflight check
+# Import the module containing our helper functions
+Import-Module C9SentinelOne
+
+# Run the pre-flight check
+$preFlightCheck = Test-S1InstallPreFlight
+Write-Verbose "Pre-flight check result: $($preFlightCheck.Reason)"
+
+# If the check says to stop, we exit gracefully.
+if ($preFlightCheck.ShouldStop) {
+    Write-Warning "Halting script based on pre-flight check."
+    # We use 'return' to exit this script cleanly without throwing an error
+    return
+}
+
+# --- If we get here, it's safe to proceed with the rest of the install logic ---
+Write-Verbose "Pre-flight check passed. Continuing with installation..."
+
 
 try {
     Write-Verbose "--- C9-S1 Installation Metascript Started ---"
