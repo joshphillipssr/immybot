@@ -1,0 +1,3 @@
+Import-Module SentinelOne
+$AuthHeader = Connect-S1API -S1Uri $SentinelOneUri -S1ApiToken $ApiKey -Verbose
+Download-File $URL -Headers $AuthHeader -Destination $InstallerFile

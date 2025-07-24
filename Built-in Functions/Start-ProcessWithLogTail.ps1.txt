@@ -1,0 +1,238 @@
+<#
+.SYNOPSIS
+    Starts a process and tails its log file, providing real-time updates and executing actions based on regex patterns.
+
+.DESCRIPTION
+    The 'Start-ProcessWithLogTail' function starts a specified process with given arguments, monitors its log file in real-time, and performs actions based on regex pattern matches within the log.
+    
+    It is particularly useful for processes that generate log output, allowing for immediate feedback and response.
+
+.PARAMETER Path
+    The path to the executable file that starts the process.
+
+.PARAMETER ArgumentList
+    Arguments to pass to the process being started.
+
+.PARAMETER LogFilePath
+    The path to the log file of the process. The log file will be monitored for real-time updates.
+
+.PARAMETER LiteralLogFilePath
+    The literal path to the log file, without any variable expansion.
+
+.PARAMETER TimeoutSeconds
+    The maximum time to wait for the process to complete. Default is 3600 seconds (1 hour).
+
+.PARAMETER RegexActions
+    A hashtable where each key is a regex pattern and each value is a script block to execute when the pattern is matched in the log.
+
+.PARAMETER RegexFilter
+    A regex pattern to filter the log output. Only lines matching this pattern will be displayed.
+
+.PARAMETER WorkingDirectory
+    The working directory for the process.
+
+.EXAMPLE
+    $InstallerLogFile = Invoke-ImmyCommand { [IO.Path]::GetTempFileName() }
+    Start-ProcessWithLogTail -Path $InstallerFile -ArgumentList "arg1", "arg2" -LogFilePath $InstallerLogFile
+
+    This example starts the installer process with arguments 'arg1' and 'arg2', and tails the log file at the path stored in `$InstallerLogFile`.
+    `$InstallerFile` contains the full path to the installer file.
+
+.EXAMPLE
+    $InstallerLogFile = Invoke-ImmyCommand { [IO.Path]::GetTempFileName() }
+    Start-ProcessWithLogTail -Path $InstallerFile -LogFilePath $InstallerLogFile -RegexActions @{ "Error" = { Write-Host "Error detected" } }
+
+    This example starts the installer process and monitors its log file stored in `$InstallerLogFile`. When the word 'Error' appears in the log, it outputs "Error detected" to the host.
+    `$InstallerFile` contains the full path to the installer file.
+
+.NOTES
+    Revision History:
+    - [2023-07-05 Dimitri Rodis] Increased Timeout from 1200 to 3600 due to Dell Command Updates timing out.
+    - [2022-12-22 Jacob/Colin] Replaced LogFilePath with EscapedLogFilePath.
+
+.INPUTS
+    None. You cannot pipe objects to this function.
+
+.OUTPUTS
+    Outputs the process object if the process completes successfully. Otherwise, outputs relevant error or warning messages.
+#>
+
+[CmdletBinding(DefaultParameterSetName = "ExpandLogFilePath")]
+param(
+    [Parameter(Mandatory, Position = 0)]
+    [Alias('PSPath', 'FilePath')]
+    [ValidateNotNullOrEmpty()]
+    [string]$Path,
+
+    [Parameter(Position = 1)]
+    [Alias('Args')]
+    [ValidateNotNullOrEmpty()]
+    [string[]]$ArgumentList,
+
+    [Parameter(Mandatory, ParameterSetName = "ExpandLogFilePath")]
+    [string]$LogFilePath,
+
+    [Parameter(Mandatory, ParameterSetName = "NoExpandLogFilePath")]
+    [string]$LiteralLogFilePath,
+
+    [int]$TimeoutSeconds = 3600,
+
+    [Hashtable]$RegexActions,
+
+    [string]$RegexFilter,
+
+    $WorkingDirectory
+)
+
+#if($LogFilePath.Contains('$'))
+
+Write-Host "Escaping LogFilePath: $LogFilePath"
+$EscapedLogFilePath = New-LiteralString $LogFilePath
+Write-Host "Escaped LogFilePath: $EscapedLogFilePath"
+if ($WorkingDirectory) {
+    Write-Verbose "Working Directory: $WorkingDirectory"
+}
+$UseLiteralLogFilePath = $false
+if ($Cmdlet.ParameterSetName -eq "NoExpandLogFilePath") {
+    $UseLiteralLogFilePath = $true
+    Write-Host "Using literal log file path"
+}
+
+Invoke-ImmyCommand -timeout $TimeoutSeconds {
+    $Path = $using:Path
+    $WorkingDirectory = $using:WorkingDirectory
+    $ArgumentList = $using:ArgumentList
+    $EscapedLogFilePath = $using:EscapedLogFilePath
+    $UseLiteralLogFilePath = $using:UseLiteralLogFilePath
+    $RegexFilter = $using:RegexFilter
+    
+    if ($UseLiteralLogFilePath) {
+        $LogFilePath = $EscapedLogFilePath
+    } else {
+        $LogFilePath = $ExecutionContext.InvokeCommand.ExpandString($EscapedLogFilePath)
+    }
+
+    $RegexActions = $using:RegexActions
+    
+    Write-Host "EscapedLogFilePath: $EscapedLogFilePath LogFilePath: $LogFilePath"
+    Write-Host "Working Directory: $WorkingDirectory"
+    if (!(($LogFilePath -match '\*|\?') -or (Test-Path $LogFilePath))) {
+        New-Item -ItemType File -Path $LogFilePath -Force
+    }
+
+    $StartTime = Get-Date
+    Write-Host "$(($StartTime).ToString('s')) Running $Path $ArgumentList"
+    $ProcessJob = Start-Job -ScriptBlock {
+        param($Path, $ArgumentList, $WorkingDirectory) 
+        $ArgumentListExpanded = $ExecutionContext.InvokeCommand.ExpandString($ArgumentList)
+        [string]$PathExpanded = $ExecutionContext.InvokeCommand.ExpandString($Path)
+
+        # 2022-09-08 - Can't just do simply Test-Path since sometimes you're dealing with a native command on the path like cmd
+        if (!(Get-Command $PathExpanded -ErrorAction SilentlyContinue)) {
+            throw "Aborting: $PathExpanded does not exist"
+        }
+
+        $Params = @{
+            FilePath     = $PathExpanded
+            ArgumentList = $ArgumentListExpanded
+            Passthru     = $true
+            Wait         = $true
+        }
+        if ($null -ne $WorkingDirectory) {
+            $Params.WorkingDirectory = $WorkingDirectory
+        }
+        
+        $Process = Start-Process @Params
+        
+        return $Process
+    } -ArgumentList @($Path, $ArgumentList, $WorkingDirectory)
+
+    Write-Host "$((Get-Date).ToString('s')) Streaming $LogFilePath"
+    $LogJob = Start-Job -ScriptBlock {
+        param($LogFilePath, $RegexFilter)
+        $lastContent = $null
+        while($true) {
+            if(Test-Path $LogFilePath) {
+                $currentContent = if ($RegexFilter) {
+                    Get-Content -Path $LogFilePath -Tail 200 | Select-String -Pattern $RegexFilter
+                } else {
+                    Get-Content -Path $LogFilePath -Tail 200
+                }
+                
+                if($currentContent -and $currentContent -ne $lastContent) {
+                    $currentContent
+                    $lastContent = $currentContent
+                }
+            }
+            Start-Sleep -Milliseconds 500
+        }
+    } -ArgumentList @($LogFilePath, $RegexFilter)
+
+    [int]$ErrorLines = 0
+    # Do-While loop to keep the job running until the process job is done
+    do {
+        Start-Sleep -Milliseconds 500
+        $LatestOutput = $LogJob | Receive-Job
+        if ($LatestOutput) {
+            if (!$RegexFilter) {
+                $LatestOutput | Out-String | Write-Host
+            }
+
+            foreach ($Output in $LatestOutput) {
+                if ($RegexFilter) {
+                    if ($Output -match $RegexFilter -or $ErrorLines -gt 0) {
+                        if ($ErrorLines -gt 0) {
+                            $ErrorLines--
+                        } else {
+                            $ErrorLines = 5
+                        }
+                        Write-Host $Output.Line
+                    }
+                }
+
+                foreach ($RegexPattern in $RegexActions.Keys) {
+                    if ($Output -match $RegexPattern) {
+                        $ScriptBlock = [ScriptBlock]::Create($RegexActions[$RegexPattern])
+                        Invoke-Command $ScriptBlock
+                    }
+                }
+            }
+        }
+    } while ((Get-Job -Id $ProcessJob.Id).State -eq 'Running')
+
+    # Write-Host (Receive-Job $LogJob | Out-String)
+    $Process = $null
+    Write-Progress "Receiving Process Job"
+    $finalState = (Get-Job -Id $ProcessJob.Id).State
+    if ($finalState -eq 'Completed') {
+        $Process = Receive-Job -Job $ProcessJob
+    } elseif ($finalState -eq 'Failed') {
+        Write-Warning "Job failed."
+    } else {
+        Write-Warning "Job did not complete successfully. State: $finalState"
+    }
+    #$Process = Receive-Job $ProcessJob
+    # Write-Verbose ($Process | Out-String)
+    Write-Progress "Stopping Log Stream"
+    Stop-Job $LogJob
+    Remove-Job $LogJob
+    Remove-Job $ProcessJob
+    $EndTime = Get-Date
+    $FileName = [IO.Path]::GetFileName($Path)
+
+    if ($null -ne $Process) {
+        Write-Host "$(($EndTime).ToString('s')) $FileName`nExit Code: $($Process.ExitCode)"
+    } else {
+        Write-Warning "No process information available."
+    }
+
+    $Duration = $EndTime - $StartTIme
+    if ($Duration.TotalMinutes -ge 1) {
+        Write-Host "$FileName ran for $([int]$Duration.TotalMinutes) minute(s) $($Duration.Seconds) second(s)"
+    } else {
+        Write-Host "$FileName ran for $($Duration.TotalSeconds) second(s)"
+    }
+    return $Process
+}
+
+return $Process

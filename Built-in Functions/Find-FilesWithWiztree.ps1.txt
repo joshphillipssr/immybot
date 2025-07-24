@@ -1,0 +1,79 @@
+param(
+[Parameter(Position=0,Mandatory=$False,HelpMessage=@'
+Turning this on will include meta data about the file 
+'@)]
+[Boolean]$IncludeFileDetails,
+[Parameter(Position=1,Mandatory=$True,HelpMessage=@'
+Example syntax
+*.msi|*.iso|*Downloads\*.exe|*Desktop\*.exe|*install*.exe|*setup*.exe|*client*.exe|*server*.exe
+'@)]
+[String]$Filter
+)
+Invoke-ImmyCommand {
+    $Filter = $using:Filter
+    $IncludeFileDetails = $using:IncludeFileDetails
+    if($IncludeFileDetails -like "*IncludeFileDetails*" -or $IncludeFileDetails -like "*false*" -or $IncludeFileDetails -like "0")
+    {
+        $IncludeFileDetails = $false
+    }
+    else
+    {
+        $IncludeFileDetails = $true
+    }
+
+    if ($env:PROCESSOR_ARCHITECTURE -eq "amd64") 
+    { 
+        $FileName = "wiztree64.exe"
+    }
+    else 
+    {
+        $FileName = "wiztree.exe"
+    }
+
+    $WizTreePath = "$($env:windir)\temp\$FileName"
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12;
+    $Uri = "https://immybot.blob.core.windows.net/software/Tools/$FileName"
+    $Uri | Write-Variable
+    Start-BitsTransfer -Source $Uri -Destination $WizTreePath
+    if(Test-Path $WizTreePath)
+    {
+        $FoundFilesCsvPath = Join-Path "$($env:windir)\temp" "msifiles.csv"    
+        $args = @"
+"$($env:SystemDrive)" /filter="$Filter" /admin=1 /export="$FoundFilesCsvPath"
+"@
+        Start-Process -Wait -NoNewWindow $WizTreePath -ArgumentList $args
+
+        $FoundFiles = Get-Content $FoundFilesCsvPath | select -skip 1 | ConvertFrom-Csv
+        Remove-Item $FoundFilesCsvPath -force | Out-Null
+        $FoundFilesClean = $FoundFiles | %{ 
+            $RetObj = New-Object psobject -Property ([ordered]@{FileName=(Split-Path $_."File Name" -Leaf);FullPath=$_."File Name";SizeMB=[double]('{0:N2}' -f ($_.Size/1MB))}) 
+            if($IncludeFileDetails)
+            { 
+                $VersionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($RetObj.FullPath)
+                if($null -ne $VersionInfo)
+                {
+                    $RetObj | Add-Member -NotePropertyName "FileVersion" -NotePropertyValue $VersionInfo.FileVersion
+                    $RetObj | Add-Member -NotePropertyName "ProductName" -NotePropertyValue $VersionInfo.ProductName
+                    $RetObj | Add-Member -NotePropertyName "ProductVersion" -NotePropertyValue $VersionInfo.ProductVersion
+                    $ZoneInformation = Get-Content -path $RetObj.FullPath -Stream Zone.Identifier -ErrorAction SilentlyContinue
+                    if($null -ne $ZoneInformation)
+                    {
+                        foreach($Line in $ZoneInformation)
+                        {
+                            $SplitIndex = $Line.IndexOf("=")
+                            if($SplitIndex -gt 0)
+                            {
+                                $Name = $Line.Substring(0,$SplitIndex)
+                                $Value = $Line.Substring($SplitIndex + 1)
+                                $RetObj | Add-Member -NotePropertyName $Name -NotePropertyValue $Value
+                            }
+                        }
+                    }
+                }
+            }
+            $RetObj
+        }
+        $FoundFilesClean = $FoundFiles | %{ new-object psobject -Property ([ordered]@{FileName=(Split-Path $_."File Name" -Leaf);FullPath=$_."File Name";SizeMB=[double]('{0:N2}' -f ($_.Size/1MB))}) }    
+        $FoundFilesClean | ConvertTo-csv -NoTypeInformation
+    }
+}

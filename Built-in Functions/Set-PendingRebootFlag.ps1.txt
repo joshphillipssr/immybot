@@ -1,0 +1,39 @@
+<#
+.SYNOPSIS
+    Sets a pending reboot flag in the Windows registry.
+
+.DESCRIPTION
+    This function creates a 'PendingFileRenameOperations' registry entry to programmatically set a pending reboot flag in Windows.
+    It's typically used to simulate a state where Windows requires a reboot to complete certain operations, such as after software installation or updates.
+
+.PARAMETER (No parameters)
+
+.EXAMPLE
+    Set-PendingRebootFlag
+    This command sets a pending reboot flag in the Windows registry by creating a temporary file and assigning it to the 'PendingFileRenameOperations' registry entry.
+
+.NOTES
+    The function creates a temporary file name using .NET's Path.GetTempFileName() method and adds this file to the 'PendingFileRenameOperations' registry entry.
+
+.INPUTS
+    None. You cannot pipe objects to this function.
+
+.OUTPUTS
+    This function does not output any objects. It modifies the Windows registry to set a pending reboot flag.
+#>
+
+[CmdletBinding()]
+param()
+
+Invoke-ImmyCommand {
+    $ExistingProperty = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue
+    if ($null -eq $ExistingProperty) {
+        $ItemToDelete = [IO.Path]::GetTempFileName()
+        New-ItemProperty `
+            -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\' `
+            -Name PendingFileRenameOperations `
+            -Value $ItemToDelete `
+            -Force `
+            -ErrorAction SilentlyContinue | Out-Null
+    }
+}

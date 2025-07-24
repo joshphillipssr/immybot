@@ -1,0 +1,500 @@
+<#
+.SYNOPSIS
+    Downloads one or more files from specified sources to designated destinations.
+
+.DESCRIPTION
+    This function facilitates downloading files from given URLs to local destinations.
+    It supports multiple sources and destinations, hash verification for file integrity, optional peer distribution for efficient downloading, and fallback to basic downloading mechanisms.
+    The function can be customized with various parameters, including hash algorithm selection, timeout specifications, and HTTP headers.
+
+.PARAMETER Source
+    Specifies the URL(s) of the file(s) to download. Multiple sources can be provided as an array.
+
+.PARAMETER Destination
+    Specifies the local path(s) where the downloaded file(s) should be saved. Multiple destinations can be provided as an array.
+
+.PARAMETER ExpectedHash
+    Specifies the expected hash value(s) of the downloaded file(s) for integrity verification. Multiple hashes can be provided as an array.
+
+.PARAMETER HashAlgorithm
+    Specifies the algorithm to be used for hash verification. Supported algorithms include MD5, SHA1, SHA256, and SHA512. The default is MD5.
+
+.PARAMETER TimeoutSeconds
+    Specifies the timeout for the download operation in seconds. The default is 300 seconds (5 minutes).
+
+.PARAMETER UsePeerDistribution
+    Enables the use of peer distribution technology for downloading files, when available.
+
+.PARAMETER ForcePeerDistProxyHashRecalc
+    Forces the peer distribution proxy to recalculate the hash of the file, if applicable.
+
+.PARAMETER PeerDistProxy
+    Specifies the URI of the peer distribution proxy to be used for downloading files.
+
+.PARAMETER ProxyList
+    Specifies one or more proxy servers to be used for the download operation.
+
+.PARAMETER Force
+    Forces the download even if the destination file already exists and matches the expected hash.
+
+.PARAMETER Headers
+    Specifies additional HTTP headers to be sent with the download request.
+
+.PARAMETER UseCDN
+    Indicates whether to use a Content Delivery Network (CDN) for downloading, if available.
+
+.PARAMETER UseBasicDownload
+    Forces the function to use a basic downloading mechanism, bypassing advanced methods like BITS.
+
+.EXAMPLE
+    Download-File -Source "http://example.com/file.zip" -Destination "C:\temp\file.zip"
+    Downloads a single file from the specified URL to the given destination.
+
+.EXAMPLE
+    Download-File -Source @("http://example.com/file1.zip", "http://example.com/file2.zip") -Destination @("C:\temp\file1.zip", "C:\temp\file2.zip") -ExpectedHash @("abc123", "def456") -HashAlgorithm "SHA256"
+    Downloads multiple files from specified URLs to given destinations with SHA256 hash verification.
+
+.NOTES
+    This function is designed to handle various download scenarios, including direct and peer-assisted downloads.
+    It provides flexibility in verifying the integrity of downloaded files and supports downloading through proxy servers.
+#>
+
+[CmdletBinding()]
+param(
+    [Parameter(Position = 0)]
+    [string[]]$Source,
+    [Parameter(Position = 1)]
+    [string[]]$Destination,
+    [Parameter()]
+    # [Parameter(ParameterSetName="HashProvided")]
+    [string[]]$ExpectedHash,
+    # [Parameter(ParameterSetName="HashProvided")]
+    [ValidateSet('MD5', 'SHA1', 'SHA256', 'SHA512')]
+    [string]$HashAlgorithm = 'MD5',
+    [int]$TimeoutSeconds = 300,
+    [Parameter()]
+    # [Parameter(ParameterSetName="HashProvided")]
+    # [Parameter(ParameterSetName="PeerDist")]
+    [switch]$UsePeerDistribution,
+    # [Parameter(ParameterSetName="HashProvided")]
+    # [Parameter(ParameterSetName="PeerDist")]
+    [switch]$ForcePeerDistProxyHashRecalc,
+    # [Parameter(ParameterSetName="HashProvided")]
+    # [Parameter(ParameterSetName="PeerDist")]
+    [Uri]$PeerDistProxy = 'https://immybitsproxy.azurewebsites.net/download',
+    $ProxyList,
+    [switch]$Force,
+    [System.Collections.IDictionary]$Headers,
+    [switch]$UseCDN,
+    [switch]$UseBasicDownload
+)
+$PSDefaultParameterValues = @{
+    "Invoke-*Request:ProgressAction" = 'SilentlyContinue'
+}
+
+$OriginalSource = $Source
+$MultiFile = ($Source | Measure-Object | Select-Object -expand Count) -gt 1
+Write-Verbose "MultiFile: $MultiFile"
+
+if (!$Destination) {
+    $Destination = $Source | ForEach-Object {
+        [Uri]$SourceUri = $_
+        # Attempt HEAD
+        $FileName = Get-FileNameFromUri -Uri $SourceUri -Headers $Headers
+        Write-Verbose "FileName: $FileName"
+        if (!$FileName) {
+            return New-ImmyTempFile
+        } else {
+            return New-ImmyTempFile -FileName $FileName
+        }
+    }
+}
+
+$Source = $Destination | ForEach-Object {
+    $ThisDestination = $_
+    if ($MultiFile) {
+        $Index = [Array]::IndexOf($Destination, $ThisDestination)
+        if ($ExpectedHash) {
+            $ThisExpectedHash = $ExpectedHash[$Index]
+        }
+        $ThisSource = $Source[$Index]
+    } else {
+        $ThisExpectedHash = $ExpectedHash
+        $ThisSource = $Source | Select-Object -First 1
+    }
+
+    if (!(Invoke-ImmyCommand { Test-Path $Using:ThisDestination })) {
+        Write-Progress "$ThisDestination does not exist, will download"
+    }
+
+    $ThisHeadResponse = Invoke-WebRequest -Uri $ThisSource -Method Head -Headers $Headers
+    [UInt64]$ThisExpectedSize = $ThisHeadResponse.Headers."Content-Length" | Select-Object -First 1
+    Write-Verbose "Content-Length: $ThisExpectedSize"
+    # $DestinationDrive = $ThisDestination[0..1]
+    # Write-Host "Fetching available free space on destination volume(s) $($DestinationDrive)"
+    # Invoke-ImmyCommand {
+    #     $DestinationDrive = $using:DestinationDrive
+    #     Write-Host (gwmi Win32_LogicalDisk | ?{$DestinationDrive -contains $_.DeviceID} | fl * | Out-String)
+    # }
+    if (!$ThisExpectedHash) {
+        Write-Warning "Hash not provided, attempting to get MD5 hash from HEAD request"
+        Write-Verbose "ResponseHeaders`:`r`n$($ThisHeadResponse.Headers | Format-Table | Out-String)"
+        $ContentMD5Base64 = $ThisHeadResponse.Headers."Content-MD5" | Select-Object -First 1
+        if ($ContentMD5Base64) {
+            Write-Progress "Content-MD5 (Base64)`: $ContentMD5Base64"
+            $ThisExpectedHash = (ConvertFrom-Base64 $ContentMD5Base64 | ForEach-Object { $_.ToString("X2") }) -Join ''
+            Write-Progress "Content-MD5: $ThisExpectedHash"
+            $HashAlgorithm = 'MD5'
+        } else {
+            Write-Progress "No Content-MD5 found in HEAD response"
+        }
+    }
+    Write-Verbose "UsePeerDistribution: $UsePeerDistribution"
+    if ($UsePeerDistribution) {
+        if (!$ThisExpectedSize) {
+            Write-Warning "Not using peer distribution as origin doesn't support Content-Length"
+        } elseif ($ThisExpectedSize -gt 2GB) {
+            Write-Warning "Not using peer distribution as this file is $((($ThisExpectedSize) / 1GB).ToString('0'))GB and ImmyBot's current implementation doesn't support files over 2GB"
+        } else {
+            Write-Progress "Downloading" -Status "Configuring Peer Distribution"
+            Write-Verbose "Verifying BranchCache Client Configuration"
+            # $BranchCacheConfig = Invoke-ImmyCommand { Get-BCClientConfiguration | ConvertTo-Json | ConvertFrom-Json }
+            $BranchCacheConfig = Invoke-ImmyCommand { Get-BCClientConfiguration -ErrorAction SilentlyContinue }
+            $oldmethod = $method
+            $method = "set"
+            $null = Get-WindowsRegistryValue -Path "HKLM:\Software\Policies\Microsoft\Windows\BITS" -Name EnablePeercaching | Should-Be 1
+            $null = Get-WindowsRegistryValue -Path "HKLM:\Software\Policies\Microsoft\Windows\BITS" -Name MaxBandwidthServed | Should-Be 4294967200 -Type DWORD
+            $method = $oldmethod
+
+            if ($null -ne $BranchCacheConfig) {
+                Write-Verbose ($BranchCacheConfig | Format-List * | Out-String)
+
+                if (!$BranchCacheConfig.DistributedCachingIsEnabled) {
+                    Write-Verbose "BranchCacheClientMode.DistributedCachingIsEnabled: $($BranchCacheConfig.DistributedCachingIsEnabled) should be true"
+                    Write-Verbose "Setting Client Mode to DistributedCache"
+                    Invoke-ImmyCommand { Enable-BCDistributed } | Out-String | Write-Host
+                }
+                $BranchCacheData = Invoke-ImmyCommand { Get-BCDataCache }
+                Write-Verbose ($BranchCacheData | Select-Object CacheFileDirectoryPath, CurrentSizeOnDiskAsNumberOfBytes, MaxCacheSizeAsNumberOfBytes, MaxCacheSizeAsPercentageOfDiskVolume, CurrentActiveCacheSize | Out-String)
+            } else {
+                Write-Warning "BranchCache is not enabled on this client"
+            }
+
+            $ThisSource = Add-UriQueryParameter -Uri $PeerDistProxy -Parameter @{
+                Url = $ThisSource
+            }
+            if ($ForcePeerDistProxyHashRecalc) {
+                $ThisSource = Add-UriQueryParameter -Uri $ThisSource -Parameter @{
+                    NoCache = $true
+                }
+            }
+
+            Write-Host "Using new immy bits proxy"
+            Write-Host "$($ThisSource | Out-String)"
+        }
+    } else {
+        Write-Verbose "Not using Peer Distribution"
+    }
+    Invoke-ImmyCommand -Timeout 900 {
+        $ThisSource = $using:ThisSource
+        $ThisDestination = $using:ThisDestination
+        $ThisExpectedHash = $using:ThisExpectedHash
+        $HashAlgorithm = $using:HashAlgorithm
+        $ThisExpectedSize = $using:ThisExpectedSize
+        $ThisFileSize = 0
+        if ((Test-Path $ThisDestination)) {
+            $ThisFileSize = Get-Item -Path $ThisDestination | Select-Object -Expand Length
+            Write-Verbose "$ThisDestination exists with size of $ThisFileSize bytes"
+            Write-Progress "File exists with size of $ThisFileSize bytes"
+            if ($ThisFileSize -eq 0 -and $ThisExpectedSize -ne 0) {
+                Write-Warning "$ThisDestination is $ThisFileSize bytes, will download"
+                return $ThisSource
+            }
+        }
+        if ($null -ne $ThisExpectedSize -and $ThisExpectedSize -gt 0 -and $ThisFileSize -ne $ThisExpectedSize) {
+            Write-Warning "$ThisDestination is $ThisFileSize bytes and should be $ThisExpectedSize bytes, will download"
+            return $ThisSource
+        }
+
+        if (!$ThisExpectedHash) {
+            Write-Warning "No hash available, will overwrite"
+            return $ThisSource
+        }
+        Write-Progress "Getting $HashAlgorithm Hashes of existing files"
+        Write-Verbose "Getting $HashAlgorithm hash of $ThisDestination"
+        $ActualHash = Get-FileHash -Path $ThisDestination -Algorithm $HashAlgorithm | Select-Object -Expand Hash
+
+        if ($ThisExpectedHash -notlike $ActualHash) {
+            Write-Warning "$Dest`: ExpectedHash $ThisExpectedHash doesn't match ActualHash $ActualHash"
+            return $ThisSource
+        } else {
+            Write-Progress "Hashes match, skipping download"
+            Write-Verbose "Hashes match, skipping download of $ThisSource"
+        }
+    }
+}
+
+if (!$Source) {
+    Write-Verbose "No source (File may have already been downloaded and skipped) returning"
+    return $Destination
+}
+
+$BitsJobGuid = Invoke-ImmyCommand {
+    $Destination = $using:Destination
+    Write-Verbose "Destination: $Destination"
+
+    $Source = $using:Source
+    $ProxyList = $using:ProxyList
+    $Force = $using:Force
+    $UseBasicDownload = $using:UseBasicDownload
+    $Headers = $using:Headers
+    Write-Verbose "Looking for existing BITS Transfers to Resume"
+    $ExistingTransfers = Get-BitsTransfer
+    $EligibleBitsTransfers = $ExistingTransfers | Where-Object {
+        try {
+            $CompareResult = Compare-Object $_.FileList.RemoteName $Source
+            return !$CompareResult
+        } catch {
+            Write-Verbose "Exception while looking for BITS Transfers for $($Source | Out-String): $($_.Exception.Message | Out-String)"
+            $false
+        }
+    }
+    $ExistingBitsTransfer = $EligibleBitsTransfers | Where-Object {
+        $MissingFiles = $_.FileList.LocalName | Where-Object { !(Test-Path $_) }
+        if ($MissingFiles) {
+            # Returning false here to prevent attaching to a job that whose destination files have been subsequently deleted
+            return $false
+        }
+        $RemoteNames = $_.FileList.RemoteName
+        $CompareResult = Compare-Object $RemoteNames $Source
+        Write-Verbose ($CompareResult | Out-String)
+        return ($null -eq $CompareResult)
+    } | Select-Object -Last 1
+
+    if (!$UseBasicDownload -and (!$ExistingBITStransfer -or $Force -eq $true)) {
+        Write-Verbose "Creating new BITS Transfer"
+        $StartBitsTransferParams = @{}
+        if ($ProxyList) {
+            $StartBitsTransferParams.ProxyList = $ProxyList
+            $StartBitsTransferParams.ProxyUsage = "Override"
+        }
+        if ($Headers) {
+            <#
+            -CustomHeader support
+            Get-Command C:\Windows\system32\WindowsPowerShell\v1.0\Modules\BitsTransfer\Microsoft.BackgroundIntelligentTransfer.Management.Interop.dll | %{$_.Version.ToString()}
+            7.8.22621.1 - Works (Windows 11)
+            7.8.14393.4046 - Doesn't work (Microsoft Windows Server 2016 Standard)
+            7.8.17763.1432 - Doesn't work (Microsoft Windows Server 2019 Standard)
+            #>
+            $StartBitsTransferParams.CustomHeaders = $Headers.Keys | ForEach-Object { $_ + ": " + ($Headers["$_"] -Join ',') }
+            $StartBitsTransferParams.HttpMethod = "Get"
+        }
+        if ($Destination) {
+            $StartBitsTransferParams.Destination = $Destination | ForEach-Object {
+                $DestinationPath = $ExecutionContext.InvokeCommand.ExpandString($_)
+                $FolderPath = Split-Path -Parent $DestinationPath
+                if (!(Test-Path $FolderPath)) {
+                    Write-Verbose "$FolderPath does not exist, creating..."
+                    New-Item -ItemType directory -Path $FolderPath -Force | Out-Null
+                }
+                Write-Verbose "DestinationPath: $DestinationPath"
+                return $DestinationPath
+            }
+        }
+        Write-Verbose "Source: $Source"
+        try {
+            $Job = Start-BitsTransfer -Source $Source -Asynchronous -RetryTimeout 600 -RetryInterval 60 @StartBitsTransferParams
+        } catch [System.IO.FileLoadException] {
+            #'The process cannot access the file \'(.+)\' because it is being used by another process.'
+            # $_ | fl * -Force | Out-String | Write-Warning
+            Write-Error -Exception $_.Exception -TargetObject $Destination -ErrorAction Stop -Message "$Destination in use"
+            Write-Warning $_.Exception.Message
+            Write-Warning "FileName: $($_.Exception.FileName)"
+        }
+        Write-Verbose "JobState: $($Job.JobState)"
+
+        if (!$Job.JobId) {
+            Write-Warning "Unable to create BITS job"
+        } else {
+            Write-Verbose "Created BITS Transfer with JobId: $($Job.JobId)"
+            $Job | Format-List * | Out-String | Write-Verbose
+            # Write-Progress -id 0 -Activity "Created BITS Transfer with JobId: $($Job.JobId)"
+        }
+    } else {
+        Write-Verbose "Using existing BITS Transfer: $($ExistingBITSTransfer.JobId)"
+        $Job = $ExistingBITStransfer
+    }
+    return $Job.JobId
+}
+if ($UseBasicDownload -or !$BitsJobGuid) {
+    Write-Host "Using basic download"
+    foreach ($Uri in $Source) {
+        $DestinationFilePath = $Destination
+        if ($MultiFile) {
+            $DestinationFilePathIndex = [array]::indexof($Source, $Uri)
+            $DestinationFilePath = $Destination[$DestinationFilePathIndex]
+        }
+        Write-Host "Downloading $Uri to $DestinationFilePath"
+        Invoke-ImmyCommand -Timeout 900 {
+            $Headers = $using:Headers
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            $Uri = $using:Uri
+            $DestinationFilePath = $ExecutionContext.InvokeCommand.ExpandString($using:DestinationFilePath)
+            $FolderPath = Split-Path -Parent $DestinationFilePath
+            if (!(Test-Path $FolderPath)) {
+                Write-Verbose "$FolderPath does not exist, creating..."
+                New-Item -ItemType directory -Path $FolderPath -Force | Out-Null
+            }
+            Write-Verbose "DestinationPath: $DestinationFilePath"
+            # $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+            #$session.Headers = $Headers
+            try {
+                Invoke-WebRequest -Uri $Uri -UseBasicParsing -OutFile $DestinationFilePath -Headers $Headers #-WebSession $session
+            } catch {
+                $_.Exception | Format-List * -Force | Out-String | Write-Warning
+                Write-Error -ErrorRecord $_
+            }
+            # $webClient = New-Object System.Net.WebClient
+            # if($Headers)
+            # {
+            #     $webClient.Headers = $Headers
+            # }
+            # $webClient.DownloadFile($Uri, $DestinationFilePath)
+        }
+    }
+    return $DestinationFilePath
+}
+$Expiration = (Get-Date).AddSeconds($TimeoutSeconds)
+$LastBytesTransferred = 0
+# Colin Blaise - Changed from 1 second to 5 seconds to reduce load
+$PollingIntervalInSeconds = 5
+function Format-Speed {
+    param([int]$SpeedInKBps)
+    $ABSSpeed = $SpeedInKBps
+
+    if ($ABSSpeed -lt 0) {
+        $ABSSpeed = $ABSSpeed * -1
+    }
+
+    $SpeedString = $ABSSpeed.ToString('N0') + "KB/sec"
+    if ($ABSSpeed -gt 1024) {
+        $SpeedString = ($ABSSpeed / 1024).ToString('N0') + "MB/sec"
+    }
+    return $SpeedString
+}
+$FileCount = $Source | Measure-Object | Select-Object -Expand Count
+$LastPeerFileStatusArray = @($null) * $FileCount
+do {
+
+    try {
+        $Status = Get-BITSJobPeerStats $BitsJobGuid
+        Write-Verbose "|`r`n$($Status | Format-Table JobState, Priority, BytesFromOrigin, BytesFromPeers, ErrorCondition | Out-String)"
+    } catch {
+        Write-Error $_ -ErrorAction Stop
+        return
+    }
+    $LastBytesTransferred = $TotalBytesTransferred
+    $TotalBytesTransferred = $Status.BytesFromOrigin + $Status.BytesFromPeers
+
+    if ($LastPeerStatus -and $Status.BytesTotal -gt 0) {
+        $SecondsSinceLastStatus = ($Status.Timestamp - $LastPeerStatus.Timestamp).TotalSeconds
+        $SpeedFromPeers = Format-Speed (($Status.BytesFromPeers - $LastPeerStatus.BytesFromPeers) / (1KB * $SecondsSinceLastStatus))
+        $SpeedFromOrigin = Format-Speed (($Status.BytesFromOrigin - $LastPeerStatus.BytesFromOrigin) / (1KB * $SecondsSinceLastStatus))
+        $OverallSpeed = Format-Speed ((($Status.BytesFromOrigin + $Status.BytesFromPeers) - ($LastPeerStatus.BytesFromOrigin + $LastPeerStatus.BytesFromPeers)) / (1KB * $SecondsSinceLastStatus))
+        [int]$PercentFromPeers = (100 * $Status.BytesFromPeers / $Status.BytesTotal)
+        [int]$PercentFromOrigin = (100 * $Status.BytesFromOrigin / $Status.BytesTotal)
+
+        [int]$PercentComplete = (($TotalBytesTransferred / $Status.BytesTotal) * 100)
+        if ($LastPercentComplete -ne $PercentComplete) {
+            Write-Progress -Id 1 -Activity "Downloading $FileCount file(s) at $OverallSpeed" -Status "Origin: $SpeedFromOrigin ($PercentFromOrigin% of total) || Peers: $SpeedFromPeers ($PercentFromPeers% of total)" `
+                -PercentComplete $PercentComplete
+            [int]$LastPercentComplete = $PercentComplete
+        }
+        foreach ($File in ($Status.FileList | Sort-Object LocalName)) {
+            $statusIndex = [array]::indexof($Status.FileList, $File)
+            $PeerFileStatus = $Status.FilePeerStats[$statusIndex]
+            $LastPeerFileStatus = $LastPeerFileStatusArray[$statusIndex]
+            if ($LastPeerFileStatus) {
+                $SpeedFromPeers = Format-Speed (($PeerFileStatus.BytesFromPeers - $LastPeerFileStatus.BytesFromPeers) / (1KB * $SecondsSinceLastStatus))
+                $SpeedFromOrigin = Format-Speed (($PeerFileStatus.BytesFromOrigin - $LastPeerFileStatus.BytesFromOrigin) / (1KB * $SecondsSinceLastStatus))
+                [int]$PercentFromPeers = (100 * $PeerFileStatus.BytesFromPeers / $File.BytesTotal)
+                [int]$PercentFromOrigin = (100 * $PeerFileStatus.BytesFromOrigin / $File.BytesTotal)
+                # Write-Host ($PeerFileStatus | fl * | Out-String)
+                if ($FileCount -gt 1) {
+                    [int]$FilePercentComplete = (100 * $File.BytesTransferred / $File.BytesTotal)
+                    if ($true -or $LastFilePercentComplete -ne $FilePercentComplete) {
+                        Write-Progress -Id ($statusIndex + 2) -ParentId 1 -PercentComplete $FilePercentComplete -Activity ($File.LocalName) -Status ("$PercentFromOrigin% from Origin: $SpeedFromOrigin $PercentFromPeers% from Peers: $SpeedFromPeers")
+                        [int]$LastFilePercentComplete = $FilePercentComplete
+                    }
+                }
+            }
+            $LastPeerFileStatusArray[$statusIndex] = $PeerFileStatus
+        }
+    }
+    $LastPeerStatus = $Status
+    Start-Sleep -s $PollingIntervalInSeconds
+} while ($Status.JobState -notlike "Error" -and $Status.JobState -notlike "Transferred" )
+if ($Status.JobState -like "Transferred") {
+    $Status | Format-List * | Out-String | Write-Verbose
+    # $TotalSeconds = ($Status.TransferCompletionTime - $Status.CreationTime).TotalSeconds
+    # $FinalOverallSpeed = $Status.BytesTransferred / $TotalSeconds
+    # $FinalPeerSpeed = $Status.BytesFromPeers / $TotalSeconds
+    # $FinalOriginSpeed = $Status.BytesFromOrigin / $TotalSeconds
+    # [int]$PercentFromPeers = (100 * $Status.BytesFromPeers / $Status.BytesTotal)
+    # [int]$PercentFromOrigin = (100 - $PercentFromPeers)
+    # Write-Progress -id 0 -Activity "Downloaded at $($FinalOverallSpeed)KB/sec" -Status "$PercentFromOrigin% from Origin: $($FinalOriginSpeed)KB/sec $PercentFromPeers% from Peers: $($FinalPeerSpeed)KB/sec" `
+    #         -PercentComplete 100
+}
+Write-Verbose "JobState: $($Status.JobState)"
+if ($Status.JobState -like "Error") {
+    $Message = "$((Get-Date).ToString('s')): $($Status.ErrorDescription)"
+    $Message | Write-Warning
+    Write-Progress "Removing Errored/Incomplete Transfer Job"
+    Invoke-ImmyCommand {
+        Get-BitsTransfer -JobId $using:BitsJobGuid | Remove-BitsTransfer
+    }
+    throw $Message
+}
+$Status.FileList | Out-String | Write-Verbose
+Write-Verbose "Completing BITS Job $BitsJobGuid"
+$CompleteJobResult = Invoke-ImmyCommand {
+    $Status = $using:Status
+    try {
+        <#  This can fail with the following error:
+                Complete-BitsTransfer : The system cannot find the file specified. (Exception from HRESULT: 0x80070002)
+                At line:256 char:52
+                + …  Get-BitsTransfer -JobId $__using_BitsJobGuid | Complete-BitsTransfer
+                +                                                   ~~~~~~~~~~~~~~~~~~~~~
+                + CategoryInfo          : NotSpecified: (:) [Complete-BitsTransfer], FileNotFoundException
+                + FullyQualifiedErrorId : System.IO.FileNotFoundException,Microsoft.BackgroundIntelligentTransfer.Management.CompleteBitsTransferCommand
+        #>
+        Get-BitsTransfer -JobId $using:BitsJobGuid | Complete-BitsTransfer
+    } catch {
+        Write-Warning $_.Exception.Message
+        Write-Warning "Removing broken BitsTransfer"
+        Get-BitsTransfer -JobId $using:BitsJobGuid | Remove-BitsTransfer
+    }
+    $Status.FileList.LocalName | ForEach-Object {
+        Write-Verbose "Testing Path $_ : $((Test-Path $_))"
+    }
+}
+
+##DR 2023-01-04 - Throwing an exception does not appear to halt the deployment during the download installer phase
+#                 If the download didn't complete, we shouldn't continue. We should at least be able to verify the expected file size.
+
+##DR 2023-01-04***
+#if($null -ne $ThisExpectedSize -and $ThisExpectedSize -gt 0) {
+#    $DestinationFileSize = Invoke-ImmyCommand {
+#        $DestinationFileSize = $null
+#        $Destination = $Using:Destination
+#        $DestinationFileSize = Get-Item -Path $Destination | select -Expand Length
+#        return $DestinationFileSize
+#    }
+#    if($null -eq $DestinationFileSize -or $DestinationFileSize -ne $ThisExpectedSize) {
+#        Throw "$Desination is $DestinationFileSize and should be $ThisExpectedSize, download failed."
+#    }
+#}
+#DR 2024-01-04***
+
+Write-Verbose "Done."
+return $Destination

@@ -1,0 +1,141 @@
+# 12/22/22 - Jacob/Colin - Everything below line 36: Replaced LogFilePath with EscapedLogFilePath
+[CmdletBinding(DefaultParameterSetName = "ExpandLogFilePath")]
+param(
+    [Parameter(Mandatory=$true, Position=0)]
+    [Alias('PSPath','FilePath')]
+    [ValidateNotNullOrEmpty()]
+    [string]
+    $Path, 
+    [Parameter(Position=1)]
+    [Alias('Args')]
+    [ValidateNotNullOrEmpty()]
+    [string[]]
+    $ArgumentList, 
+    [Parameter(ParameterSetName = "ExpandLogFilePath", Mandatory=$true)]
+    [string]$LogFilePath, 
+    [Parameter(ParameterSetName = "NoExpandLogFilePath", Mandatory=$true)]
+    [string]$LiteralLogFilePath, 
+    [int]$TimeoutSeconds = 1200,
+    [Hashtable]$RegexActions,
+    [string]$RegexFilter,
+    $WorkingDirectory,
+    [string]$Context = "SYSTEM"
+)
+#if($LogFilePath.Contains('$'))
+#{
+    Write-Host "Escaping LogFilePath: $LogFilePath"
+    $EscapedLogFilePath = New-LiteralString $LogFilePath
+    Write-Host "Escaped LogFilePath: $EscapedLogFilePath"
+    Write-Host "Working Directory: $WorkingDirectory"
+    if ($Cmdlet.ParameterSetName -eq "NoExpandLogFilePath") {
+        $UseLiteralLogFilePath = $true
+        Write-Host "Using literal log file path"
+    }
+#}
+Invoke-ImmyCommand -timeout $TimeoutSeconds -ContextString $Context{
+    $Path = $using:Path
+    $WorkingDirectory = $using:WorkingDirectory
+    $ArgumentList = $using:ArgumentList
+    $EscapedLogFilePath = $using:EscapedLogFilePath
+    $UseLiteralLogFilePath = $using:UseLiteralLogFilePath    
+    
+    if ($UseLiteralLogFilePath) {
+        $LogFilePath = $EscapedLogFilePath
+    } else {
+        $LogFilePath = $ExecutionContext.InvokeCommand.ExpandString($EscapedLogFilePath)
+    }
+
+    $RegexActions = $using:RegexActions
+    
+    Write-Host "EscapedLogFilePath: $EscapedLogFilePath LogFilePath: $LogFilePath"
+    Write-Host "Working Directory: $WorkingDirectory"
+    <#
+    if(!(Test-Path $LogFilePath))
+    {
+        New-Item -ItemType File -Path $LogFilePath 
+    }
+    #>
+    $StartTime = Get-Date
+    Write-Host "$(($StartTime).ToString('s')) Running $Path $ArgumentList"    
+    $ProcessJob = Start-Job -ScriptBlock { 
+        param($Path, $ArgumentList, $WorkingDirectory) 
+        $ArgumentListExpanded = $ExecutionContext.InvokeCommand.ExpandString($ArgumentList)
+        [string]$PathExpanded = $ExecutionContext.InvokeCommand.ExpandString($Path)
+        try{
+            $Folder = [IO.Path]::GetDirectoryName($PathExpanded)
+            dir $Folder | ft | Out-String | Write-Host
+        }catch{
+            Write-Warning ($_ | Out-String)
+        }
+        # 2022-09-08 - Can't just do simply Test-Path since sometimes you're dealing with a native command on the path like cmd
+        if(!(Get-Command $PathExpanded -ErrorAction SilentlyContinue))
+        {
+            throw "Aborting: $PathExpanded does not exist"
+        }
+        $Params = @{
+            FilePath = $PathExpanded
+            ArgumentList = $ArgumentListExpanded
+            Passthru = $true
+            Wait = $true
+        }
+        if ($null -ne $WorkingDirectory)
+        {
+            
+            $Params.WorkingDirectory = $WorkingDirectory
+        }    
+
+        $Process = Start-Process @Params
+        
+        return $Process
+    } -ArgumentList @($Path, $ArgumentList, $WorkingDirectory)
+    Write-Host "$((Get-Date).ToString('s')) Streaming $LogFilePath"    
+    
+    $LogJob = Start-Job -ScriptBlock { 
+        param($LogFilePath)
+        Get-Content $LogFilePath -Tail 1000 -ReadCount 1000 -Wait
+    } -ArgumentList @($LogFilePath)
+    #
+
+    while ($ProcessJob.State -eq 'Running')
+    {
+        Start-Sleep -Milliseconds 7500
+        $LatestOutput = $LogJob | Receive-Job
+        if($LatestOutput -and !$RegexFilter)
+        {
+          $LatestOutput | Out-String | Write-Host
+        }
+        foreach($Output in $LatestOutput)
+        {
+            if($RegexFilter -and ($Output -match $RegexFilter)){
+                Write-Host $matches[0]
+            }
+            foreach($RegexPattern in $RegexActions.Keys)
+            {
+                if($Output -match $RegexPattern)
+                {
+                    $ScriptBlock = [ScriptBlock]::Create($RegexActions[$RegexPattern])
+                    Invoke-Command $ScriptBlock
+                }
+            }
+        }
+    }
+    # Write-Host (Receive-Job $LogJob | Out-String)
+    $Process = Receive-Job $ProcessJob
+    # Write-Verbose ($Process | Out-String)
+    Stop-Job $LogJob
+    Remove-Job $LogJob
+    Remove-Job $ProcessJob
+    $EndTime = Get-Date
+    $FileName = [IO.Path]::GetFileName($Path)
+    Write-Host "$(($EndTime).ToString('s')) $FileName Exit Code: $($Process.ExitCode)"
+    $Duration = $EndTime - $StartTIme
+    if($Duration.TotalMinutes -ge 1)
+    {
+        Write-Host "$FileName ran for $($Duration.TotalMinutes) minute(s) $($Duration.Seconds) second(s)"
+    } else
+    {
+        Write-Host "$FileName ran for $($Duration.TotalSeconds) second(s)"
+    }
+    return $Process
+}
+return $Process

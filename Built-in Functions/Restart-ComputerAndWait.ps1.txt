@@ -1,0 +1,667 @@
+<#
+.SYNOPSIS
+    Restarts a computer and waits for it to come back online within a specified timeout.
+
+.DESCRIPTION
+    This function initiates a restart of a specified computer or the local computer and waits for it to come back online.
+    It ensures the system is fully rebooted by comparing the last boot time before and after the restart. The function can optionally skip pending Windows updates during the reboot.
+
+.PARAMETER TimeoutDuration
+    Specifies the duration to wait for the computer to come back online after restart. Default is 30 minutes.
+
+.PARAMETER SkipUpdates
+    If specified, attempts to skip any pending Windows updates during the restart.
+
+.PARAMETER IgnoreRebootPreference
+    If specified, ignores any existing preferences or flags that might suppress a reboot.
+
+.PARAMETER PromptTimeoutActionValue
+    Specifies the action to take if the user does not consent to the restart. Valid values are 'Reboot', 'Suppress', and 'FailSession'.
+    Only applicable if ImmyBot version is 66 or higher.
+
+.PARAMETER PromptTimeoutValue
+    Specifies the duration in minutes to wait for user consent before proceeding with the action specified in PromptTimeoutActionValue.
+    Only applicable if ImmyBot version is 66 or higher.
+
+.PARAMETER Force
+    If specified, skips user prompting and proceeds with the restart.
+    Only applicable if ImmyBot version is 66 or higher.
+
+.PARAMETER Computer
+    Specifies the target computer to restart. If not provided, the function targets the local computer.
+
+.EXAMPLE
+    Restart-ComputerAndWait -TimeoutDuration (New-TimeSpan -Minutes 15)
+    Restarts the local computer and waits up to 15 minutes for it to come back online.
+
+.EXAMPLE
+    Restart-ComputerAndWait -Computer 'Server01' -SkipUpdates
+    Restarts 'Server01', skipping pending Windows updates, and waits for it to come back online.
+
+.EXAMPLE
+    Restart-ComputerAndWait -Computer 'Server01' -NonConsentActionType 'Suppress'
+    Restarts 'Server01' and suppresses the restart if the user does not consent.
+
+.INPUTS
+    None. You cannot pipe objects to this function.
+
+.OUTPUTS
+    This function does not output any objects. It displays progress and status messages during execution.
+#>
+
+[CmdletBinding()]
+param(
+    [Parameter(Position = 0)]
+    $Computer,
+
+    [Parameter(Position = 1)]
+    [TimeSpan]$TimeoutDuration,
+
+    [Parameter(Position = 2)]
+    [switch]$SkipUpdates,
+
+    [Parameter(Position = 3)]
+    [switch]$IgnoreRebootPreference,
+
+    [Parameter(Position = 4)]
+    [ValidateSet('Reboot', 'Suppress', 'FailSession')]
+    [string]$PromptTimeoutActionValue,
+
+    [Parameter(Position = 5)]
+    [TimeSpan]$PromptTimeoutValue,
+
+    [Parameter(Position = 6)]
+    [bool]$Force
+)
+
+$VerbosePreference = "Continue"
+$DidComputerReboot = $null
+
+$SkipPromptProcessing = $false
+if ($ImmyBotVersion.Minor -lt 66) {
+    Write-Warning "ImmyBot version is: $ImmyBotVersion. The Prompt and Force parameters will both be ignored."
+    $SkipPromptProcessing = $true
+}
+
+if ($RebootPreference -eq "Suppress" -and $IgnoreRebootPreference -ne $true) {
+    Write-Host "SessionRebootPreference: $RebootPreference"
+    Write-Host "Skipping Restart"
+    return
+}
+
+if ($RebootPreference -in @("Normal", "Force", "Suppress")) {
+    $SkipPromptProcessing = $true
+}
+
+if ($IgnoreRebootPreference -eq $true) {
+    Write-Host "IgnoreRebootPreference specified"
+}
+
+if ($null -eq $Computer) {
+    $Computer = Get-ImmyComputer
+}
+
+if (-not $TimeoutDuration) {
+    $TimeoutDuration = New-TimeSpan -Minutes 30
+}
+
+if (!$SkipPromptProcessing) {
+    # To avoid conflicts with global variables that have the same names as our function parameters,
+    # we use differently named parameters. If these parameters are passed explicitly, we
+    # override the global variables with these values. Otherwise, we rely on the global variables (for consistency and functionality).
+    if ($PromptTimeoutActionValue) {
+        $PromptTimeoutAction = $PromptTimeoutActionValue
+    }
+    if ($PromptTimeoutValue) {
+        $PromptTimeout = $PromptTimeoutValue
+    }
+
+    if ($Force) {
+        $InvokeResult = @{ Consent = $true; FailSession = $false; Reboot = $true; Cancelled = $false }
+    } else {
+        # Prompt the user for consent if logged in
+        try {
+            $InvokeResult = Invoke-ImmyCommand -Context User -Timeout 3900 {
+                $PromptTimeoutAction = $using:PromptTimeoutAction
+                $PromptTimeout = $using:PromptTimeout
+    
+                # UI code for user consent (WinForms)
+                Add-Type -TypeDefinition @"
+using System;
+using System.Drawing;
+using System.Runtime.InteropServices;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+public class AutoClosingMessageBox : Form
+{
+    private DialogResult _result;
+    private Label _messageLabel;
+    private Label _timeRemainingLabel;
+    private Timer _countdownTimer;
+    private int _remainingTime;
+    private string _originalMessage;
+    private string _nonConsentAction;
+
+    // DarkMode Colors
+    private static readonly Color DarkModeBackColor = Color.Black;
+    private static readonly Color DarkModeButtonColor = Color.FromArgb(31, 31, 31);
+    private static readonly Color DarkModeBackSeparatorPanelColor = Color.FromArgb(31, 31, 31);
+    private static readonly Color DarkModeBackLabelColor = Color.Black;
+    private static readonly Color DarkModeTextColor = Color.FromArgb(141, 141, 141);
+    private static readonly Color DarkModeButtonTextColor = Color.White;
+
+    // LightMode Colors
+    private static readonly Color LightModeBackColor = Color.White;
+    private static readonly Color LightModeButtonColor = Color.FromArgb(225,225,225);
+    private static readonly Color LightModeBackSeparatorPanelColor = Color.FromArgb(240, 240, 240);
+    private static readonly Color LightModeBackLabelColor = Color.White;
+    private static readonly Color LightModeTextColor = Color.Black;
+    private static readonly Color LightModeTextLabelColor = Color.FromArgb(100, 100, 100);
+
+    [DllImport("UXTheme.dll", SetLastError = true, EntryPoint = "#138")]
+    public static extern bool ShouldSystemUseDarkMode();
+
+    [DllImport("user32.dll")]
+    public static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
+    public static extern int SendMessage(IntPtr hWnd, int msg, int wp, int lp);
+
+    [DllImport("Shell32.dll", EntryPoint = "ExtractIconExW", CharSet = CharSet.Unicode, ExactSpelling = true, CallingConvention = CallingConvention.StdCall)]
+    private static extern int ExtractIconEx(string sFile, int iIndex, out IntPtr piLargeVersion, out IntPtr piSmallVersion, int nIcons);
+
+    private static Icon GetSystemIcon(string file, int index, bool largeIcon)
+    {
+        IntPtr large;
+        IntPtr small;
+        ExtractIconEx(file, index, out large, out small, 1);
+        IntPtr iconHandle = largeIcon ? large : small;
+        return iconHandle != IntPtr.Zero ? Icon.FromHandle(iconHandle) : null;
+    }
+
+    public AutoClosingMessageBox(string text, string caption, int timeout, string nonConsentAction)
+    {
+        InitializeForm(caption);
+
+        Icon formIcon = GetSystemIcon(@"C:\Windows\System32\imageres.dll", 229, false);
+        if (formIcon != null)
+        {
+            this.Icon = formIcon;
+            this.ShowInTaskbar = true;
+            this.Text = "System Restart Required";
+        }
+
+        _remainingTime = timeout / 1000;
+        _originalMessage = text;
+        _nonConsentAction = nonConsentAction;
+
+        bool isDarkMode = ShouldSystemUseDarkMode();
+        InitializeCustomTitleBar(caption, isDarkMode);
+        InitializeMessageLabel(isDarkMode);
+        InitializeButtons(isDarkMode, nonConsentAction);
+        StartCountdownTimer(timeout);
+
+        this.Resize += new EventHandler(AutoCenterLabel); // Event handler to center label on resize
+        this.FormClosing += new FormClosingEventHandler(OnFormClosing);
+        this.TopMost = true;
+    }
+
+    private void InitializeForm(string caption)
+    {
+        this.FormBorderStyle = FormBorderStyle.None;
+        this.Size = new Size(420, 200);
+        this.ControlBox = false;
+        this.MaximizeBox = false;
+        this.StartPosition = FormStartPosition.Manual;
+        this.ShowInTaskbar = true;
+        this.TopMost = true;
+
+        // This is the working area of the screen (excluding taskbar)
+        Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
+
+        int xPosition = workingArea.Right - this.Width - 10; // From the right edge
+        int yPosition = workingArea.Bottom - this.Height - 10; // From the bottom edge
+
+        this.Location = new Point(xPosition, yPosition);
+    }
+
+    private void InitializeCustomTitleBar(string caption, bool isDarkMode)
+    {
+        Panel titleBar = new Panel
+        {
+            Size = new Size(this.Width, 30),
+            Dock = DockStyle.Top,
+            BackColor = isDarkMode ? DarkModeBackLabelColor : LightModeBackLabelColor
+        };
+        titleBar.MouseDown += TitleBar_MouseDown; // Make the panel draggable
+        this.Controls.Add(titleBar);
+
+        PictureBox iconPictureBox = new PictureBox
+        {
+            Size = new Size(18, 18),
+            Location = new Point(16, 10),
+            SizeMode = PictureBoxSizeMode.StretchImage
+        };
+
+        Icon systemIcon = GetSystemIcon(@"C:\Windows\System32\imageres.dll", 229, true);
+        if (systemIcon != null)
+        {
+            iconPictureBox.Image = systemIcon.ToBitmap();
+        }
+        titleBar.Controls.Add(iconPictureBox);
+
+        Label titleLabel = new Label
+        {
+            Text = caption,
+            Font = new Font("Segoe UI", 11),
+            ForeColor = isDarkMode ? DarkModeTextColor : LightModeTextLabelColor,
+            Location = new Point(41, 8),
+            AutoSize = true
+        };
+        titleLabel.MouseDown += TitleBar_MouseDown; // Make the label draggable
+        titleBar.Controls.Add(titleLabel);
+
+        // Make the icon draggable as well
+        iconPictureBox.MouseDown += TitleBar_MouseDown;
+    }
+
+    private void TitleBar_MouseDown(object sender, MouseEventArgs e)
+    {
+        if (e.Button == MouseButtons.Left)
+        {
+            ReleaseCapture();
+            SendMessage(Handle, 0xA1, 0x2, 0);
+        }
+    }
+
+    private void InitializeMessageLabel(bool isDarkMode)
+    {
+        int margin = 15;
+        int buttonAdjustment = 1;
+        int buttonWidth = (this.ClientSize.Width - (margin * 3) - buttonAdjustment) / 2;
+        int startX = (this.ClientSize.Width - (buttonWidth * 2 + margin)) / 2;
+
+        _messageLabel = new Label
+        {
+            AutoSize = false,
+            Size = new Size(this.ClientSize.Width - 2 * startX, 60),
+            Location = new Point(startX, 50),
+            Padding = new Padding(0, 28, 0, 0),
+            TextAlign = ContentAlignment.TopLeft,
+            Font = new Font("Segoe UI Semibold", 11, FontStyle.Regular),
+            ForeColor = isDarkMode ? Color.White : LightModeTextColor,
+            Text = _originalMessage
+        };
+
+        _timeRemainingLabel = new Label
+        {
+            AutoSize = false,
+            Size = new Size(this.ClientSize.Width - 2 * startX, 57),
+            Location = new Point(startX, _messageLabel.Bottom),
+            TextAlign = ContentAlignment.TopLeft,
+            Font = new Font("Segoe UI", 11),
+            ForeColor = isDarkMode ? DarkModeTextColor : LightModeTextLabelColor
+        };
+
+        this.Controls.Add(_messageLabel);
+        this.Controls.Add(_timeRemainingLabel);
+
+        this.BackColor = isDarkMode ? DarkModeBackColor : LightModeBackColor;
+        UpdateMessageLabel(); // Call to update both labels
+    }
+
+    private void InitializeButtons(bool isDarkMode, string nonConsentAction)
+    {
+        int topPanelStart = 140;
+        Panel separatorPanel = new Panel
+        {
+            Size = new Size(this.ClientSize.Width, this.ClientSize.Height - topPanelStart),
+            Location = new Point(0, topPanelStart),
+            BackColor = isDarkMode ? DarkModeBackSeparatorPanelColor : LightModeBackSeparatorPanelColor
+        };
+        this.Controls.Add(separatorPanel);
+
+        int margin = 15;
+        int buttonAdjustment = 5;
+        int buttonWidth = (separatorPanel.Width - (margin * 3) - buttonAdjustment) / 2;
+        int buttonHeight = 35;
+        int buttonY = separatorPanel.Height - buttonHeight - 13;
+
+        int totalButtonWidth = (buttonWidth * 2) + margin;
+        int startX = (separatorPanel.Width - totalButtonWidth) / 2;
+
+        Button restartButton = CreateButton("Restart now", new Point(startX, buttonY), isDarkMode);
+        restartButton.Size = new Size(buttonWidth, buttonHeight);
+        restartButton.Click += (sender, e) => { _result = DialogResult.Yes; this.Close(); };
+        separatorPanel.Controls.Add(restartButton);
+
+        Button cancelButton = CreateButton("Cancel restart", new Point(startX + buttonWidth + margin, buttonY), isDarkMode);
+        cancelButton.Size = new Size(buttonWidth, buttonHeight);
+        cancelButton.Click += (sender, e) => { _result = DialogResult.Cancel; this.Close(); };
+        separatorPanel.Controls.Add(cancelButton);
+
+        // Use an invisible label to prevent initial focus on interactive controls.
+        Label invisibleLabel = new Label
+        {
+            Size = new Size(0, 0),
+            Location = new Point(-10, -10) // Position it off-screen
+        };
+        this.Controls.Add(invisibleLabel);
+        this.ActiveControl = invisibleLabel;
+    }
+
+    private void OnFormClosing(object sender, FormClosingEventArgs e)
+    {
+        if (_result == DialogResult.None)
+        {
+            // If no button is pressed and action is "Reboot", set result to None for timeout
+            _result = _nonConsentAction == "Reboot" ? DialogResult.None : DialogResult.No;
+        }
+    }
+
+    private Button CreateButton(string text, Point location, bool isDarkMode)
+    {
+        Color borderColor = isDarkMode ? Color.FromArgb(68, 68, 68) : Color.Gray;
+
+        Button button = new Button
+        {
+            Text = text,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = location,
+            Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+            BackColor = isDarkMode ? DarkModeButtonColor : LightModeButtonColor,
+            ForeColor = isDarkMode ? DarkModeButtonTextColor : Color.Black,
+            FlatStyle = FlatStyle.Flat,
+            FlatAppearance = { BorderSize = 1, BorderColor = borderColor },
+            Font = new Font("Segoe UI", 12)
+        };
+
+        return button;
+    }
+
+    private void StartCountdownTimer(int timeout)
+    {
+        _countdownTimer = new Timer
+        {
+            Interval = 1000 // Update every second
+        };
+        _countdownTimer.Tick += CountdownTimer_Tick;
+        _countdownTimer.Start();
+
+        Task.Delay(TimeSpan.FromMilliseconds(timeout))
+            .ContinueWith((t) => this.Close(), TaskScheduler.FromCurrentSynchronizationContext());
+    }
+
+    private void AutoCenterLabel(object sender, EventArgs e)
+    {
+        int topPosition = 10;
+        int spacing = -5;
+        
+        _messageLabel.Location = new Point((this.ClientSize.Width - _messageLabel.Width) / 2, topPosition);
+        _timeRemainingLabel.Location = new Point((this.ClientSize.Width - _timeRemainingLabel.Width) / 2, _messageLabel.Bottom + spacing);
+    }
+
+    private void CountdownTimer_Tick(object sender, EventArgs e)
+    {
+        _remainingTime--;
+
+        if (_remainingTime > 0) UpdateMessageLabel(); else this.Close();
+    }
+
+    private void UpdateMessageLabel()
+    {
+        _messageLabel.Text = _originalMessage;
+
+        string actionMessage = "This message will close in "; // Default fallback
+        if (_nonConsentAction == "Reboot")
+        {
+            actionMessage = "Please save your work and leave your device on and plugged in. Your device will restart to apply updates in ";
+        }
+        else if (_nonConsentAction == "Suppress" || _nonConsentAction == "FailSession")
+        {
+            actionMessage = "If no action is taken, updates will be postponed and your device will not restart. This message will close in ";
+        }
+
+        string timeMessage;
+        int remainingMinutes = _remainingTime / 60;
+        int remainingSeconds = _remainingTime % 60;
+
+        timeMessage = String.Format("{0} minute{1} and {2} second{3}",
+            remainingMinutes,
+            remainingMinutes == 1 ? "" : "s",
+            remainingSeconds,
+            remainingSeconds == 1 ? "" : "s");
+
+        _timeRemainingLabel.Text = String.Format("{0}{1}.", actionMessage, timeMessage);
+    }
+
+    public static DialogResult Show(string text, string caption, int timeout, string nonConsentAction)
+    {
+        AutoClosingMessageBox messageBox = new AutoClosingMessageBox(text, caption, timeout, nonConsentAction);
+        messageBox.ShowDialog();
+        return messageBox._result;
+    }
+}
+"@ -ReferencedAssemblies System.Windows.Forms, System.Drawing
+    
+                $promptTimeoutMillis = [int]$PromptTimeout.TotalMilliseconds
+                $message = "This computer is scheduled to restart."
+                $dialogResult = [AutoClosingMessageBox]::Show($message, "Scheduled Maintenance", $promptTimeoutMillis, $PromptTimeoutAction)
+                $userConsent = $dialogResult -eq [System.Windows.Forms.DialogResult]::Yes
+                $cancelled = $dialogResult -eq [System.Windows.Forms.DialogResult]::Cancel
+                $timeoutExpired = $dialogResult -eq [System.Windows.Forms.DialogResult]::None
+    
+                $result = @{
+                    Consent     = $false
+                    FailSession = $false
+                    Reboot      = $false
+                    Cancelled   = $cancelled
+                }
+    
+                if ($userConsent) {
+                    Write-Host "User consented to reboot."
+                    $result.Consent = $true
+                    $result.Reboot = $true
+                } else {
+                    switch ($PromptTimeoutAction) {
+                        'Reboot' {
+                            if ($cancelled) {
+                                Write-Host "User cancelled the reboot. Reboot will not occur."
+                            } elseif ($timeoutExpired) {
+                                Write-Host "User did not respond within the timeout period."
+                                $result.Reboot = $true
+                            }
+                        }
+                        'Suppress' {
+                            Write-Host "User did not consent or respond. Reboot is suppressed."
+                        }
+                        'FailSession' {
+                            Write-Host "User did not consent or respond. Session failed."
+                            $result.FailSession = $true
+                        }
+                    }
+                }
+                return $result
+            } -ErrorAction Stop
+        } catch {
+            Write-Warning "No user is currently logged in. Cannot prompt for restart consent."
+            return
+        }
+    }
+
+    if ($null -ne $InvokeResult -and -not $InvokeResult.Consent) {
+        if ($InvokeResult.FailSession) {
+            Stop-ImmySession
+            return $InvokeResult
+        }
+        if (!$InvokeResult.Reboot) {
+            return $InvokeResult
+        }
+    }
+}
+
+Write-Host "$((Get-Date).ToString('s')): Restarting Computer"
+Write-Verbose "Verifying post restart connectivity"
+Set-ActiveWirelessConnectionModeToAuto -Computer $Computer
+
+Write-Verbose "Getting last boot time"
+try {
+    [DateTime]$LastBootTime = Get-LastBootTime -Computer $Computer
+} catch {
+    Write-Error "Aborting: Unable to retrieve last boot time"
+    return
+}
+
+Write-Verbose "LastBootTime: $($LastBootTime)"
+try {
+    $DidComputerReboot = $Computer | Invoke-ImmyCommand {
+        $BitlockerModuleInstalled = $null -ne (Get-Module -ListAvailable Bitlocker -Verbose:$false)
+        if ($BitlockerModuleInstalled) {
+            Write-Verbose "Importing Bitlocker Module"
+            Import-Module Bitlocker -WarningAction SilentlyContinue -Verbose:$false
+            try {
+                $BitlockerEnabled = "Off" -ne (Get-BitLockerVolume -MountPoint $env:SystemDrive -ErrorAction Stop -Verbose:$false | Select-Object -Expand ProtectionStatus)
+                if ($BitlockerEnabled) {
+                    Write-Verbose "Running Suspend-Bitlocker"
+                    Suspend-BitLocker -MountPoint $env:SystemDrive -RebootCount 1 -Verbose:$false | Out-Null
+                }
+                $BitlockerEnabled = "Off" -ne (Get-BitLockerVolume -MountPoint $env:SystemDrive -ErrorAction SilentlyContinue -Verbose:$false | Select-Object -Expand ProtectionStatus)
+                if ($BitlockerEnabled) {
+                    Write-Warning "Skipping Restart, unable to suspend Bitlocker"
+                    return $false
+                } else {
+                    Write-Verbose "Successfully suspended Bitlocker"
+                }
+            } catch {
+                if ($_.Exception -is [System.Runtime.InteropServices.COMException] -and $_.Exception.ErrorCode -eq 0x80070490) {
+                    Write-Warning "This machine has some weird virtual management drive, suppressing COMException 0x80070490"
+                } else {
+                    Write-Warning "Exception thrown when attempting to suspend bitlocker:`r`n$($_ | Out-String)"
+                    # throw
+                }
+            }
+        } else {
+            Write-Warning "BitLocker module not found, looking for manage-bde"
+            if ((Get-Command manage-bde -ErrorAction SilentlyContinue)) {
+                Write-Warning "Found manage-bde, executing: Manage-bde -Protectors -Disable $($env:systemdrive) -RebootCount 1"
+                Manage-bde -Protectors -Disable ($env:systemdrive) -RebootCount 1
+            } else {
+                Write-Warning "Neither the Bitlocker module was found, nor manage-bde to suspend BitLocker."
+            }
+        }
+
+        if ($using:SkipUpdates) {
+            Write-Progress "Stopping wuauserv to skip updates"
+            net stop wuauserv
+        }
+        Write-Verbose "Executing Reboot"
+
+        $ImmyAgentService = Get-Service "ImmyBot Agent" -ErrorAction SilentlyContinue
+        if ($ImmyAgentService) {
+            Write-Progress "Stopping the ImmyAgent Service"
+            $ImmyAgentService | Stop-Service
+            Write-Progress "ImmyAgent Service Stopped"
+            Start-Sleep -Seconds 5 #Give the computer enough time to send an offline message after stopping immybot agent service
+        }
+
+        Write-Progress "Running shutdown /t 0 /g /f"
+        shutdown /t 0 /g /f
+        switch ($LastExitCode) {
+            0 {
+                Write-Progress "Shutdown Initiated successfully"
+            }
+            203 {
+                Write-Progress "shutdown.exe returned error 203, this is known to happen on version 10.0.19041.1 of shutdown.exe, initiating restart via WMI"
+                $ShutdownVersion = Get-Command shutdown -ErrorAction SilentlyContinue | Select-Object -Expand Version
+                Write-Progress "Found shutdown.exe version: $ShutdownVersion"
+                $WmiRestartResult = Invoke-CimMethod -Query 'Select * From Win32_OperatingSystem' -MethodName Win32Shutdown -Arguments @{Flags = 6 }
+                if ($WmiRestartResult.ReturnValue -ne 0) {
+                    Write-Warning "WMI Returned returned unknown exitcode $($WmiRestartResult.ReturnValue)"
+                    Write-Progress "Starting ImmyAgent after failed shutdown"
+                    $ImmyAgentService | Start-Service
+                }
+            }
+            default {
+                Write-Warning "Shutdown.exe returned exitcode $_"
+                if ($ImmyAgentService) {
+                    Write-Progress "Starting ImmyAgent after failed shutdown"
+                    $ImmyAgentService | Start-Service
+                }
+            }
+            # Restart-Computer -Force
+        }
+    }
+} catch {
+    # Commented this out because it seems that the -Force command causes an exception
+    #Write-Warning "Exception while attempting to Restart the computer"
+    #return
+}
+
+if ($DidComputerReboot -eq $false) {
+    throw "The reboot of the machine was not successful."
+}
+
+[DateTime]$BootTime = $LastBootTime
+if (!$LastBootTime) {
+    Write-Warning "Unable to retrieve LastBootTime. Aborting..."
+    return
+}
+
+Write-Debug "LastBootTime: $LastBootTime"
+$TimeoutTime = (Get-Date) + $TimeoutDuration
+$RebootComplete = $false
+
+$BeginPollingAfterDuration = New-TimeSpan -Seconds 60
+$IterationTimeout = New-TimeSpan -Seconds 120
+
+Write-Progress "$((Get-Date).ToString('s')) Total time allowed to wait for a reboot is $($TimeoutDuration.TotalMinutes) minutes"
+
+[int]$SecondsWaited = Measure-Command {
+    do {
+        try {
+            $BeforeWaitImmyComputer = Get-Date
+            $ErrorWhileWaiting = $false
+            try {
+                try {
+                    Write-Progress "$(($BeforeWaitImmyComputer).ToString('s')) Waiting for agent to come online for $($IterationTimeout.TotalSeconds) seconds. Will begin internal polling after $($BeginPollingAfterDuration.TotalSeconds) seconds"
+                    Wait-ImmyComputer -For RebootWithPollingFallback -WaitForEventTimeout $BeginPollingAfterDuration -Timeout $IterationTimeout
+                } catch [System.Management.Automation.ParameterBindingException] {
+                    Write-Progress "$(($BeforeWaitImmyComputer).ToString('s')) Waiting for agent to come online for $($IterationTimeout.TotalSeconds) seconds."
+                    Wait-ImmyComputer -For Reboot -Timeout $IterationTimeout
+                }
+            } catch {
+                # just continue the loop
+                Write-Warning "$((Get-Date).ToString('s')) Error occurred while waiting for connection event: $($_.Exception.Message)"
+                $ErrorWhileWaiting = $true
+            } finally {
+                $AfterWaitImmyComputer = Get-Date
+                Write-Progress "$((Get-Date).ToString('s')) Waited $(($AfterWaitImmyComputer - $BeforeWaitImmyComputer).TotalSeconds) seconds for an agent connection event..."
+            }
+            if (!$ErrorWhileWaiting) {
+                Write-Progress "$((Get-Date).ToString('s')) Attempting to get boot time"
+            } else {
+                Write-Progress "$((Get-Date).ToString('s')) An error occurred, attempting to get boot time anyway"
+            }
+            $BootTime = Get-LastBootTime -Computer $Computer
+            if ($BootTime) {
+                $RebootComplete = $BootTime -ne $LastBootTime
+                Write-Verbose "$((Get-Date).ToString('s')) Comparing : $($BootTime.ToString('s')) -gt $($LastBootTime.ToString('s')) = $RebootComplete"
+            }
+        } catch {
+            # just continue the loop
+            Write-Warning "$((Get-Date).ToString('s')) Error occurred in outer try/catch: $($_.Exception.Message)"
+        }
+
+        $TimedOut = (Get-Date) -gt $TimeoutTime
+    } while ($TimedOut -eq $false -and $RebootComplete -eq $false)
+} | Select-Object -Expand TotalSeconds
+
+if ($TimedOut) {
+    Write-Warning "Timeout waiting $($TimeoutDuration.TotalMinutes) minutes for $($Computer.Name) to come back online."
+} else {
+    Write-Progress "An agent reconnected after waiting $SecondsWaited seconds."
+    Write-Progress "$($Computer.Name) is Online. Reboot complete"
+}
+
+return $result

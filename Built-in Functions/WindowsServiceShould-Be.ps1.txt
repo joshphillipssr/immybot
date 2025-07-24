@@ -1,0 +1,139 @@
+param(
+    [Parameter(Mandatory, Position = 0,
+        ValueFromPipeline = $true,
+        HelpMessage = "Service object from Get-WindowsService")]
+    [object]$Service,
+
+    [Parameter(Position = 1,
+        HelpMessage = "Desired running state of the service")]
+    [ValidateSet('Running', 'Stopped')]
+    [string]$State = 'Running',
+
+    [Parameter(Position = 2,
+        HelpMessage = "Minimum acceptable service startup type")]
+    [ValidateSet('Automatic', 'Manual', 'Disabled')]
+    [string]$StartupType = 'Manual',
+
+    [Parameter(Position = 3,
+        HelpMessage = "Maximum time in seconds to wait for service to reach desired state")]
+    [int]$StateTimeout = 30,
+
+    [Parameter(Position = 4,
+        HelpMessage = "Time in seconds to monitor service stability after reaching desired state")]
+    [int]$StabilityWaitTime = 5,
+
+    [Parameter(Position = 5)]
+    [object]$Computer
+)
+
+process {
+    if(-not $Service) {
+        Write-Warning "Service not found"
+        return $false
+    }
+
+    if(!$Computer)
+    {
+        $Computer = Get-ImmyComputer
+    }
+
+    # Execute service checks and modifications on target computer
+    $Computer | Invoke-ImmyCommand {
+        $Service = $using:Service
+        $State = $using:State
+        $StartupType = $using:StartupType
+        $StateTimeout = $using:StateTimeout
+        $StabilityWaitTime = $using:StabilityWaitTime
+
+        $startupTypes = @{
+            'Automatic' = 2
+            'Manual' = 1
+            'Disabled' = 4
+        }
+
+        switch($using:method) {
+            "set" {
+                try {
+                    # Fix startup type if needed
+                    $currentStartupValue = $startupTypes[$Service.StartType]
+                    $minimumStartupValue = $startupTypes[$StartupType]
+                    
+                    if($currentStartupValue -lt $minimumStartupValue) {
+                        Write-Progress "Setting service '$($Service.Name)' startup type to $StartupType"
+                        Set-Service -Name $Service.Name -StartupType $StartupType -ErrorAction Stop
+                    }
+
+                    # Set state if needed
+                    if($Service.Status -ne $State) {
+                        Write-Progress "Setting service '$($Service.Name)' to $State state"
+                        if($State -eq 'Running') {
+                            Start-Service -Name $Service.Name
+
+                            # Get fresh service object for monitoring
+                            $Service = Get-Service -Name $Service.Name
+                            
+                            # Wait for state change
+                            $timer = [Diagnostics.Stopwatch]::StartNew()
+                            while($timer.Elapsed.TotalSeconds -lt $StateTimeout) {
+                                $Service.Refresh()
+                                if($Service.Status -eq 'Running') {
+                                    break
+                                }
+                                Start-Sleep -Seconds 1
+                            }
+                            $timer.Stop()
+
+                            # Final check
+                            $Service.Refresh()
+                            if($Service.Status -ne 'Running') {
+                                throw "Service failed to reach Running state after $StateTimeout seconds"
+                            }
+
+                            # Only monitor stability for Running services
+                            if($StartupType -ne 'Disabled' -and $StabilityWaitTime -gt 0) {
+                                Write-Progress "Verifying service stability..."
+                                1..$StabilityWaitTime | ForEach-Object {
+                                    Start-Sleep -Seconds 1
+                                    $Service.Refresh()
+                                    if($Service.Status -ne 'Running') {
+                                        throw "Service stopped running during stability check"
+                                    }
+                                }
+                            }
+                        } else {
+                            Stop-Service -Name $Service.Name
+                            
+                            # Simple verification for stopped state
+                            $Service = Get-Service -Name $Service.Name
+                            if($Service.Status -ne 'Stopped') {
+                                throw "Service failed to stop"
+                            }
+                        }
+                    }
+                    return $true
+                }
+                catch {
+                    Write-Warning "Error configuring service '$($Service.Name)': $_"
+                    return $false
+                }
+            }
+            default {
+                # Handle test case (default)
+                $currentStartupValue = $startupTypes[$Service.StartType]
+                $minimumStartupValue = $startupTypes[$StartupType]
+                
+                if($currentStartupValue -lt $minimumStartupValue) {
+                    Write-Warning "Service '$($Service.Name)' startup type is $($Service.StartType) and should be $StartupType"
+                    return $false
+                }
+
+                if($Service.Status -ne $State) {
+                    Write-Warning "Service '$($Service.Name)' is $($Service.Status) and should be $State"
+                    return $false
+                }
+
+                return $true
+            }
+        }
+    }
+}

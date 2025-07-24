@@ -1,83 +1,5 @@
-# Version: 20250721-03
-
-# Helper functions
-
-function Get-C9S1LocalAgentId {
-    [CmdletBinding()]
-    param()
-
-    Write-Verbose "Attempting to retrieve SentinelOne Agent ID from the local endpoint."
-    try {
-        # This scriptblock runs on the endpoint as SYSTEM.
-        # It's self-contained and has one job: get the agent ID.
-        $result = Invoke-ImmyCommand -ScriptBlock {
-            # Use Resolve-Path for robustly finding the executable
-            $sentinelCtlPath = Resolve-Path "C:\Program Files\SentinelOne\Sentinel Agent*\SentinelCtl.exe" -ErrorAction SilentlyContinue
-            if (-not $sentinelCtlPath) {
-                Write-Warning "SentinelCtl.exe not found on the endpoint."
-                # Return null explicitly if the exe isn't found
-                return $null
-            }
-            
-            # Execute the command to get the agent ID.
-            # We trim to ensure no leading/trailing whitespace.
-            $agentId = (& $sentinelCtlPath.Path agent_id).Trim()
-            return $agentId
-        }
-
-        if ([string]::IsNullOrWhiteSpace($result)) {
-            Write-Verbose "No local Agent ID was found."
-            return $null
-        }
-
-        Write-Verbose "Successfully retrieved local Agent ID: $result"
-        return $result
-    }
-    catch {
-        Write-Warning "An error occurred while trying to retrieve the local Agent ID: $($_.Exception.Message)"
-        return $null
-    }
-}
-
-function Test-C9S1LocalUpgradeAuthorization {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$AgentId
-    )
-
-    $endpoint = "agents/$AgentId/local-upgrade-authorization"
-    Write-Verbose "Checking API endpoint '$endpoint' for agent protection status."
-
-    try {
-        # We expect a successful call to return data with an 'enabled' property.
-        $response = Invoke-C9S1RestMethod -Endpoint $endpoint
-        
-        # The API returns { "data": { "enabled": true/false } } on success
-        if ($null -ne $response.enabled -and $response.enabled) {
-            Write-Verbose "API Response: Local upgrade authorization is ENABLED."
-            return $true
-        }
-        else {
-            Write-Verbose "API Response: Local upgrade authorization is DISABLED."
-            return $false
-        }
-    }
-    catch {
-        # Check if the error is specifically a 404 Not Found, which indicates a ghost agent.
-        if ($_.Exception.Response.StatusCode -eq [System.Net.HttpStatusCode]::NotFound) {
-            Write-Warning "Agent ID '$AgentId' returned a 404 (Not Found) from the API. This is a ghost agent."
-            # We throw a specific string that the calling function can catch and interpret.
-            throw "GHOST_AGENT"
-        }
-        
-        # For any other API error, we log it and assume it's not protected as a failsafe.
-        Write-Warning "An unexpected API error occurred while checking local upgrade authorization: $($_.Exception.Message)"
-        return $false
-    }
-}
-
-# Exported Functions
+# SentinelOne Cloud Module
+# These are API Helper functions primarily used for SentinelOne Cloud Script Context API interactions.
 
 function Connect-C9S1API {
     [CmdletBinding()]
@@ -174,6 +96,23 @@ function Invoke-C9S1RestMethod {
             throw $_ #.Exception.Response
         }
     }
+}
+
+function Get-C9S1AuthHeader {
+    [CmdletBinding()]
+    param()
+
+    # The $IntegrationContext variable is automatically populated by the ImmyBot platform
+    # when running a script linked to a dynamic integration.
+    if (-not $IntegrationContext) {
+        throw "FATAL: Get-C9S1AuthHeader cannot execute. The `$IntegrationContext is not available."
+    }
+
+    $AuthHeader = @{
+        "Authorization" = "ApiToken $($IntegrationContext.S1ApiToken)"
+    }
+
+    return $AuthHeader
 }
 
 function Get-C9S1Site {
@@ -388,73 +327,3 @@ function Get-C9S1AgentPassphrase {
     }
 }
 
-function Test-S1InstallPreFlight {
-    [CmdletBinding()]
-    [OutputType([PSCustomObject])]
-    param()
-
-    Write-Verbose "Starting SentinelOne installation pre-flight check..."
-
-    try {
-        # Step 1: Get the local agent ID using our dedicated bridge function.
-        $localAgentId = Get-C9S1LocalAgentId
-        
-        # Step 2: Handle the "Not Installed" case. If no ID, we can proceed.
-        if (-not $localAgentId) {
-            return [PSCustomObject]@{
-                ShouldStop = $false
-                Reason     = 'SentinelOne not detected locally. Proceeding with installation.'
-            }
-        }
-
-        # Step 3: We have an ID. Now check its status against the API.
-        try {
-            $isProtected = Test-C9S1LocalUpgradeAuthorization -AgentId $localAgentId
-
-            # Step 4a: If protected, we MUST stop.
-            if ($isProtected) {
-                return [PSCustomObject]@{
-                    ShouldStop = $true
-                    Reason     = 'STOP: Agent is healthy and protected by a local upgrade/downgrade policy in the S1 portal.'
-                }
-            }
-            # Step 4b: If not protected, we can proceed.
-            else {
-                 return [PSCustomObject]@{
-                    ShouldStop = $false
-                    Reason     = 'Agent is online and not protected by a local upgrade policy. Proceeding with workflow.'
-                }
-            }
-        }
-        catch {
-            # Step 4c: Catch the specific "GHOST_AGENT" error from our helper function. This is a "go" condition.
-            if ($_ -eq 'GHOST_AGENT') {
-                return [PSCustomObject]@{
-                    ShouldStop = $false
-                    Reason     = 'Ghost Agent: Local ID found but does not exist in S1 portal. Proceeding with remediation.'
-                }
-            }
-            # If it was a different, unexpected error, re-throw it to be caught by the outer block.
-            throw $_
-        }
-    }
-    catch {
-        # This is a final catch-all for any other unexpected errors. It's safest to allow the installation
-        # to proceed but with a clear warning about the pre-flight check failure.
-        Write-Warning "An unexpected error occurred during the pre-flight check: $($_.Exception.Message). Defaulting to allow installation."
-        return [PSCustomObject]@{
-            ShouldStop = $false
-            Reason     = "An unexpected error occurred during pre-flight check: $($_.Exception.Message). Proceeding with workflow as a failsafe."
-        }
-    }
-}
-
-Export-ModuleMember -Function @(
-    'Connect-C9S1API',
-    'Invoke-C9S1RestMethod',
-    'Get-C9S1Site',
-    'Get-C9S1Agent',
-    'Get-C9S1AvailablePackages',
-    'Get-C9S1AgentPassphrase',
-    'Test-S1InstallPreFlight'
-)

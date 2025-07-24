@@ -1,0 +1,19 @@
+param(
+    [Parameter(Mandatory, Position = 0,
+        HelpMessage = "Name of the service to check")]
+    [string]$Name,
+
+    [Parameter(Position = 1)]
+    [object]$Computer
+)
+
+process {
+    if(!$Computer)
+    {
+        $Computer = Get-ImmyComputer
+    }
+
+    return $Computer | Invoke-ImmyCommand {
+        Get-Service -Name $using:Name -ErrorAction SilentlyContinue
+    }
+}

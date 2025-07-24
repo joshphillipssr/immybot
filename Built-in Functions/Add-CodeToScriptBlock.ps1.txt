@@ -1,0 +1,8 @@
+param ([switch]$PrependMode, [ScriptBlock]$OriginalScriptBlock, [string]$CodeToAdd)
+    $originalScriptBlockString = $OriginalScriptBlock.ToString()
+
+    if($PrependMode)
+    {
+        return [ScriptBlock]::Create("$CodeToAdd`r`n$originalScriptBlockString")
+    }
+    return [ScriptBlock]::Create("$originalScriptBlockString`r`n$CodeToAdd")

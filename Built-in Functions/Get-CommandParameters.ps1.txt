@@ -1,0 +1,119 @@
+<#
+.SYNOPSIS
+    Retrieves parameter metadata for a specified command.
+
+.DESCRIPTION
+    This function fetches and displays parameter details for a given command.
+    It supports filtering by module, tracing command execution, and specifying additional arguments.
+    The function is useful for dynamically inspecting command capabilities and understanding parameter configurations.
+
+.PARAMETER Name
+    The name of the command to retrieve parameter metadata for. This parameter is mandatory.
+
+.PARAMETER Module
+    Specifies the module that contains the command. Use this parameter to disambiguate commands with the same name from different modules.
+
+.PARAMETER Trace
+    Enables tracing of command execution, providing detailed diagnostic information.
+
+.PARAMETER Position
+    Specifies the position of the argument in the command's argument list. This parameter is not directly used in parameter metadata retrieval.
+
+.PARAMETER ArgumentList
+    Additional arguments to pass to the command for which parameters are being retrieved. Supports passing an array of arguments.
+
+.INPUTS
+    None
+    Parameters must be explicitly provided when calling the function.
+
+.OUTPUTS
+    System.Management.Automation.RuntimeDefinedParameter
+    Outputs runtime-defined parameters representing the metadata of each command parameter, excluding common parameters.
+
+.EXAMPLE
+    Get-CommandParameters -Name 'Join-AzureAD'
+    Retrieves parameter metadata for the Join-AzureAD command.
+
+.EXAMPLE
+    Get-CommandParameters -Name Get-Item -Module Microsoft.PowerShell.Management -Trace
+    Retrieves parameter metadata for the Get-Item command from the Microsoft.PowerShell.Management module with tracing enabled.
+#>
+
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)]
+    [ValidateNotNullOrEmpty()]
+    [string]$Name,
+    [string]$Module,
+    [switch]$Trace,
+    [int]$Position,
+    [Parameter(ValueFromRemainingArguments=$true)]
+    [Alias('Args')]
+    [AllowNull()]
+    [AllowEmptyCollection()]
+    $ArgumentList
+)
+$CommonParameterNames = [System.Management.Automation.Internal.CommonParameters].GetProperties().Name
+$ArgumentList | Write-Variable
+$Expression = {
+    Write-Progress "Running Get-Command -name $Name"
+    try
+    {
+        $ht = @{}
+        if($ArgumentList)
+        {
+            $ht.ArgumentList = @(,$ArgumentList)
+        }
+        if($Module)
+        {
+            $ht.Module = $Module
+        }
+        Get-Command -Name $Name @ht  
+    } catch
+    {
+        $_ | fl * | Out-String | Write-Warning
+        $_.Exception | fl * | Out-String | Write-Warning
+        $_.Exception.CommandInvocation | fl * | Out-String | Write-Warning
+    } finally
+    {
+        Write-Progress "Done Running Get-Command"
+    }
+
+}
+if($trace)
+{
+    $Names = @(
+        'ParameterBinderBase',
+        'ParameterBinderController',
+        'ParameterBinding',
+        'TypeConversion'
+    )
+    [System.Management.Automation.CommandInfo]$CommandMetadata = Trace-Command -Name * -PSHost -Expression $Expression
+} else
+{
+    [System.Management.Automation.CommandInfo]$CommandMetadata = . $Expression
+}
+if(!$CommandMetadata)
+{
+    throw "Unable to get CommandMetadata for $Name"
+}
+$Position = 0
+if(!$CommandMetadata.Parameters){
+    return
+}
+$CommandMetadata.Parameters.GetEnumerator() | %{
+    $ParameterName = $_.Key
+    if($CommonParameterNames -contains $ParameterName)
+    {
+        # Write-Progress "Skipping Common Parameter $ParameterName"
+    } else
+    {
+        Write-Progress "Emitting $Name parameter $ParameterName"
+        [System.Management.Automation.ParameterMetadata]$ParameterMetadata = $_.Value
+        $ParameterAttribute = $ParameterMetadata.Attributes | ?{ $_ -is[System.Management.Automation.ParameterAttribute]}  | group ParameterSetName | %{$_.Group | select -First 1 } | %{
+            $_
+        }
+        $ParameterAttribute.Position = $Position++
+        New-Object -TypeName System.Management.Automation.RuntimeDefinedParameter($ParameterName, $ParameterMetadata.ParameterType, $ParameterMetadata.Attributes)
+    }
+}

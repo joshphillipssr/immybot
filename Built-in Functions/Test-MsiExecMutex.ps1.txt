@@ -1,0 +1,114 @@
+[CmdletBinding()]
+Param (
+    [Parameter(Mandatory=$false)]
+    [ValidateNotNullOrEmpty()]
+    [timespan]$MsiExecWaitTime = $(New-TimeSpan -Seconds 60),
+    [switch]$ForceKill
+)
+Invoke-ImmyCommand -Timeout 300 {
+    Begin
+    {
+        $IsMsiExecFreeSource = @'
+    using System;
+    using System.Threading;
+    public class MsiExec
+    {
+        public static bool IsMsiExecFree(TimeSpan maxWaitTime)
+        {
+            // Wait (up to a timeout) for the MSI installer service to become free.
+            // Returns true for a successful wait, when the installer service has become free.
+            // Returns false when waiting for the installer service has exceeded the timeout.
+            const string installerServiceMutexName = "Global\\_MSIExecute";
+            Mutex MSIExecuteMutex = null;
+            bool isMsiExecFree = false;
+            
+            try
+            {
+                MSIExecuteMutex = Mutex.OpenExisting(installerServiceMutexName, System.Security.AccessControl.MutexRights.Synchronize);
+                isMsiExecFree   = MSIExecuteMutex.WaitOne(maxWaitTime, false);
+            }
+            catch (WaitHandleCannotBeOpenedException)
+            {
+                // Mutex doesn't exist, do nothing
+                isMsiExecFree = true;
+            }
+            catch (ObjectDisposedException)
+            {
+                // Mutex was disposed between opening it and attempting to wait on it, do nothing
+                isMsiExecFree = true;
+            }
+            finally
+            {
+                if (MSIExecuteMutex != null && isMsiExecFree)
+                MSIExecuteMutex.ReleaseMutex();
+            }
+            return isMsiExecFree;
+        }
+    }
+'@
+        If (-not ([System.Management.Automation.PSTypeName]'MsiExec').Type)
+        {
+            Add-Type -TypeDefinition $IsMsiExecFreeSource -Language CSharp -IgnoreWarnings -ErrorAction 'Stop'
+        }
+    }
+    Process
+    {
+        $MsiExecWaitTime = $using:MsiExecWaitTime
+        Try
+        {
+            If ($MsiExecWaitTime.TotalMinutes -gt 1)
+            {
+                [string]$WaitLogMsg = "$($MsiExecWaitTime.TotalMinutes) minutes"
+            } ElseIf ($MsiExecWaitTime.TotalMinutes -eq 1)
+            {
+                [string]$WaitLogMsg = "$($MsiExecWaitTime.TotalMinutes) minute"
+            } Else
+            {
+                [string]$WaitLogMsg = "$($MsiExecWaitTime.TotalSeconds) seconds"
+            }
+            Write-Progress "Check to see if mutex [Global\\_MSIExecute] is available. Wait up to [$WaitLogMsg] for the mutex to become available." 
+            [boolean]$IsMsiExecInstallFree = [MsiExec]::IsMsiExecFree($MsiExecWaitTime)
+        
+            If ($IsMsiExecInstallFree)
+            {
+                Write-Progress 'Mutex [Global\\_MSIExecute] is available.' 
+            } Else
+            {
+            
+                $MSIExecInstalls = Get-WmiObject -Class Win32_Process -Filter "name = 'msiexec.exe'" #| Where-Object { $_.CommandLine -notmatch 'msiexec.exe /V' }
+                $MSIExecsMSIInstalls = $MSIExecInstalls | Where-Object { $_.CommandLine -match '\.msi' }
+
+                if($Using:ForceKill -ne $true) {
+                    #[string]$msiInProgressCmdLine = Get-WmiObject -Class Win32_Process -Filter "name = 'msiexec.exe'" | Select-Object -ExpandProperty CommandLine | Where-Object { $_ -match '\.msi' } | ForEach-Object { $_.Trim() }
+                    #throw "Mutex [Global\\_MSIExecute] is not available because of one of the following MSI installation is in progress [$msiInProgressCmdLine]"
+                    if($MSIExecInstalls) {
+                        $MSI = $MSIExecsMSIInstalls
+                    }
+                    else {
+                        $MSI = $MSIExecInstalls
+                    }
+                    $Message = "Mutex [Global\\_MSIExecute] is not available because of one of the following MSI installations is in progress:`n"
+                    foreach($MSIProcess in $MSI) {
+                        $Message = $Message + "$($msiprocess.CommandLine)`n"
+                    }
+                    throw $Message
+                }
+                else {
+                    foreach($MSIProcess in $MSIExecInstalls) {
+                        Write-Host "Killing $($MSIProcess.CommandLine) : ID=$($MSIProcess.Id)"
+                        Stop-Process -id $MSIProcess.ProcessId -Force
+                    }
+                    $IsMsiExecInstallFree = [MsiExec]::IsMsiExecFree($MsiExecWaitTime)
+                }
+            }
+            Write-Output $IsMsiExecInstallFree
+        } Catch
+        {
+            Write-Error  "Failed check for availability of mutex [Global\\_MSIExecute].`n$($_)"
+            Write-Output $true
+        }
+    }
+    End
+    {
+    }
+}
