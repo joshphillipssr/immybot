@@ -2,16 +2,13 @@
 .SYNOPSIS
     Orchestrates the tiered, robust uninstallation of the SentinelOne agent from the Metascript context.
 .DESCRIPTION
-    This script is the definitive uninstaller for the C9SP-SentinelOne software package. It has been
-    re-architected to leverage modern ImmyBot logging and reboot-handling best practices.
-
-    The Metascript now acts as a central orchestrator, executing each phase of the uninstall
-    playbook and using platform-native functions for logging and reboot flagging. It uses
-    Start-ProcessWithLogTailContext to provide real-time visibility into each removal tool.
+    This script is the definitive uninstaller for the C9SP-SentinelOne software package.
+    It follows a multi-phase playbook, escalating its removal methods to handle healthy, broken,
+    and "ghost" agent installations. It leverages custom helper modules and platform-native
+    functions for maximum reliability and observability.
 .NOTES
-    Author:     Josh Phillips
-    Created:    07/15/2025
-    Version:    20250722-02 - Final Refactor for Logging & Reboots
+    Author:     Josh Phillips, in collaboration with AI Assistant
+    Version:    20250724-1.1 (Refactored downloader function into helper module)
 #>
 
 # =================================================================================
@@ -20,120 +17,163 @@
 
 $ProgressPreference = 'SilentlyContinue'
 $VerbosePreference = 'Continue'
+$s1UnpackDir = $null
 
-Write-Host "Importing C9SentinelOne modules..."
-Import-Module C9SentinelOneMeta -ErrorAction Stop
-Import-Module C9SentinelOneCloud -ErrorAction Stop
-
-# This is our verification check, run from the Metascript.
-## Moved to C9SentinelOneMeta.psm1.
-
-Write-Host "Verifying if the SentinelOne agent is still present on the endpoint..."
-Test-IsAgentRemoved
-
-
-# --- SCRIPT EXECUTION STARTS HERE ---
-
+# --- Main Orchestration Block ---
 try {
     Write-Host "--- C9-S1 Uninstall Playbook Started ---"
 
-    # Phase 0: Get Passphrase (fault-tolerant)
+    # --- Setup and Module Imports ---
+    Write-Host "Importing helper modules..."
+    try {
+        # This import now makes BOTH Invoke-C9EndpointCommand and Resolve-InstallerAvailable available.
+        Import-Module "C9MetascriptHelpers" -ErrorAction Stop
+        Import-Module "C9SentinelOneMeta" -ErrorAction Stop
+        Write-Host "Successfully imported helper modules."
+    }
+    catch {
+        throw "Failed to import a required module. Ensure C9MetascriptHelpers and C9SentinelOneMeta are saved as Global Scripts. Error: $_"
+    }
+
+    # --- Passphrase Retrieval ---
     $Passphrase = $null
-    Write-Verbose "Phase 0: Attempting to retrieve passphrase from integration..."
+    Write-Host "Attempting to retrieve passphrase from integration..."
     try {
         $Passphrase = Get-IntegrationAgentUninstallToken -ErrorAction Stop
         if ([string]::IsNullOrWhiteSpace($Passphrase)) { throw "Integration returned a null or empty passphrase." }
-        Write-Verbose "Successfully retrieved passphrase via integration."
+        Write-Host "Successfully retrieved agent-specific passphrase."
     } catch {
-        Write-Warning "Could not retrieve uninstall passphrase. Error: $([string]$_). Proceeding with methods that do not require a passphrase."
+        Write-Warning "Could not retrieve uninstall passphrase. Some removal methods will be skipped. Error: $($_.Exception.Message)."
     }
 
-    # Phase 0.5: Pre-stage all required removal tools using the platform's native downloader.
-    Write-Verbose "Phase 0.5: Downloading required removal tools..."
-    $modernCleanerUrl = "https://raw.githubusercontent.com/joshphillipssr/immybot/main/SentinelOne/Tools/SentinelOneInstaller_windows_64bit_v24_2_3_471.exe"
-    $legacyCleanerUrl = "https://raw.githubusercontent.com/joshphillipssr/immybot/main/SentinelOne/Tools/SentinelCleaner_22_1GA_64.exe"
-    
-    $modernCleanerPath = Download-File -Source $modernCleanerUrl
-    $legacyCleanerPath = Download-File -Source $legacyCleanerUrl
-    Write-Verbose "Tools downloaded successfully to ImmyBot's temp directory."
+    # =========================================================================
+    # --- PHASE 1: PRE-FLIGHT SAFETY CHECK ---
+    # =========================================================================
+  Write-Host "[PHASE 1] Checking for other active MSI installations..."
+    try { Test-MsiExecMutex -ErrorAction Stop; Write-Host "[PHASE 1] SUCCESS" }
+    catch { throw "[PHASE 1] FAILED: Another MSI installation is in progress. Halting to prevent conflicts." }
 
-    # --- THE PLAYBOOK ---
-    
-    # Phase 1: Modern Cleaner (requires passphrase)
-    if (-not [string]::IsNullOrWhiteSpace($Passphrase)) {
-        Write-Host "--- Phase 1: Attempting Modern Cleaner (`-c`) ---"
-        # Define a log file path for the tool on the endpoint.
-        $logPath = "C:\ProgramData\ImmyBot\S1\s1_uninstall_ModernCleaner.log"
-        # The Modern Cleaner needs the --log parameter to write to a file.
-        $args = @('-c', '-k', $Passphrase, '--qn', '--log', "`"$logPath`"")
-        $process = Start-ProcessWithLogTailContext -Path $modernCleanerPath -ArgumentList $args -LogFilePath $logPath -TimeoutSeconds 600
+    Write-Host "[PHASE 2] Attempting standard, graceful uninstallation..."
+    $s1Info = Get-C9SentinelOneInfo
+    if (-not $s1Info) { Write-Host "[SUCCESS] Agent not found on pre-check."; return }
+
+    if ($s1Info -and $Passphrase) {
+        $uninstallExe = Join-Path -Path $s1Info.InstallPath -ChildPath "uninstall.exe"
+        $logFile = Invoke-ImmyCommand { Join-Path $env:TEMP "s1_uninstall_standard_$(Get-Date -Format 'yyyyMMdd-HHmmss').log" }
+        Write-Host "Running standard uninstaller: '$($uninstallExe)'..."
+        $uninstallResult = Start-ProcessWithLogTail -Path $uninstallExe -ArgumentList @('/uninstall', '/norestart', '/q', '/k', $Passphrase) -LogFilePath $logFile
+        if (-not (Get-C9SentinelOneInfo)) { Write-Host "[SUCCESS] PHASE 2 was successful."; return }
+    } else { Write-Warning "[PHASE 2] SKIPPED: Agent info or passphrase not available." }
+
+    Write-Host "[PHASE 3] Agent still present. Attempting to disable self-protection..."
+    if ($Passphrase) {
+        try { Set-C9SentinelOneUnprotect -Passphrase $Passphrase -ErrorAction Stop }
+        catch { Write-Warning "[PHASE 3] FAILED to disable self-protection. This may not be critical." }
+    } else { Write-Warning "[PHASE 3] SKIPPED: No passphrase available." }
+
+    Write-Host "[PHASE 4] Attempting removal with the modern installer's clean function..."
+    if ($Passphrase -and (Test-Path $InstallerFile)) {
+        $logFile = Invoke-ImmyCommand { Join-Path $env:TEMP "s1_uninstall_modern_$(Get-Date -Format 'yyyyMMdd-HHmmss').log" }
+        Write-Host "Running modern cleaner using main installer: '$($InstallerFile)'..."
+        $cleanerResult = Start-ProcessWithLogTail -Path $InstallerFile -ArgumentList @('-c', '-k', $Passphrase, '--qn', '--log', $logFile) -LogFilePath $logFile
+        if (-not (Get-C9SentinelOneInfo)) { Write-Host "[SUCCESS] PHASE 4 was successful."; return }
+    } else { Write-Warning "[PHASE 4] SKIPPED: Passphrase or main installer file not available." }
+
+
+    # =========================================================================
+    # --- PHASE 5: THE NUCLEAR OPTION (On-Demand Extraction) ---
+    # =========================================================================
+    Write-Host "[PHASE 5] Standard methods failed. Escalating to on-demand cleaner extraction..."
+    if (Test-Path $InstallerFile) {
         
-        if ($process.ExitCode -eq 0 -and (Test-IsAgentRemoved)) {
-            Write-Host "[SUCCESS] Agent successfully removed by Modern Cleaner."
-            return
+        # Step 5.1: Locate the 7-Zip CLI executable on the endpoint.
+        Write-Host "[PHASE 5.1] Locating 7z.exe from dependent package..."
+        $sevenZipPath = Invoke-ImmyCommand -ScriptBlock {
+            @(
+                "$($env:ProgramFiles)\7-Zip\7z.exe",
+                "$($env:ProgramFilesX86)\7-Zip\7z.exe"
+            ) | Where-Object { Test-Path $_ } | Select-Object -First 1
         }
-        Write-Warning "Phase 1 did not result in a successful removal. Exit Code: $($process.ExitCode)."
-    } else { Write-Warning "--- SKIPPING Phase 1: No passphrase available. ---"}
-
-    # Phase 2: Unprotect Agent (requires passphrase, prepares for legacy cleaner)
-    if (-not [string]::IsNullOrWhiteSpace($Passphrase)) {
-        Write-Host "--- Phase 2: Attempting to Unprotect Agent (`sentinelctl unprotect`) ---"
-        $sentinelCtlPath = Invoke-ImmyCommand {
-            $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='SentinelAgent'" -ErrorAction SilentlyContinue
-            if ($service) { return Join-Path -Path (Split-Path -Path ($service.PathName.Trim('"')) -Parent) -ChildPath 'SentinelCtl.exe' }
-            return $null
+        if (-not $sevenZipPath) {
+            throw "[PHASE 5.1] FAILED: 7z.exe not found. Ensure '7-Zip' is a dependency for this package."
         }
+        Write-Host "[PHASE 5.1] SUCCESS: Found 7-Zip at '$($sevenZipPath)'"
 
-        if ($sentinelCtlPath) {
-            $logPath = "C:\ProgramData\ImmyBot\S1\s1_uninstall_Unprotect.log"
-            # SentinelCtl.exe does not have a log flag, but Start-ProcessWithLogTail will capture its console output.
-            $args = @('unprotect', '-k', $Passphrase)
-            $process = Start-ProcessWithLogTailContext -Path $sentinelCtlPath -ArgumentList $args -LogFilePath $logPath -TimeoutSeconds 300
-            
-            if ($process.ExitCode -eq 0) { Write-Host "Agent successfully unprotected." } 
-            else { Write-Warning "Unprotect command failed. Exit Code: $($process.ExitCode). Proceeding to legacy cleaner anyway."}
-        } else { Write-Warning "Could not find SentinelCtl.exe on the endpoint." }
-    } else { Write-Warning "--- SKIPPING Phase 2: No passphrase available. ---"}
-
-    # Phase 3: Legacy Cleaner (Nuclear Option)
-    Write-Host "--- Phase 3: Attempting Legacy Cleaner ---"
-    if(Test-IsAgentRemoved) {
-        Write-Host "[SUCCESS] Agent was already removed before Phase 3. Exiting."
-        return
-    }
-
-    $logPath = "C:\ProgramData\ImmyBot\S1\s1_uninstall_LegacyCleaner.log"
-    # The legacy cleaner does not have a log flag, so we tail its console output.
-    $process = Start-ProcessWithLogTailContext -Path $legacyCleanerPath -ArgumentList @() -LogFilePath $logPath -TimeoutSeconds 600
-
-    # Verify using the method you discovered: check for the cleaner's own exit code file.
-    $cleanerExitCode = Invoke-ImmyCommand { Get-Content -Path 'C:\Windows\Temp\sc-exit-code.txt' -ErrorAction SilentlyContinue }
-    if ($cleanerExitCode -eq '0') {
-        Write-Host "Legacy Cleaner verification successful (sc-exit-code.txt is 0)."
+        ### REFACTORED: Use the system temp directory ###
+        # Step 5.2: Create a temporary directory for extraction and get its path.
+        Write-Host "[PHASE 5.2] Creating temporary unpack directory in endpoint's TEMP folder..."
+        $unpackDirPath = Invoke-ImmyCommand -ScriptBlock {
+            # Construct the path using the endpoint's environment variables.
+            $tempDir = Join-Path -Path $env:TEMP -ChildPath 'ImmyBot_S1_Unpack'
+            if (Test-Path $tempDir) {
+                # Clean up from any previous failed runs.
+                Remove-Item -Path $tempDir -Recurse -Force
+            }
+            New-Item -Path $tempDir -ItemType Directory -Force | Out-Null
+            # Return the full path back to the Metascript.
+            return $tempDir
+        }
+        Write-Host "[PHASE 5.2] SUCCESS: Created unpack directory at '$($unpackDirPath)'"
         
-        # REBOOT LOGIC: The cleaner succeeded, so we set the "soft" reboot flag using the platform-native function.
-        Write-Host "Setting the pending reboot flag for the OS..."
-        Set-PendingRebootFlag
-        Write-Warning "A reboot is now pending on this device to finalize the removal."
+        # Step 5.3: Extract the cleaner
+        Write-Host "[PHASE 5.3] Extracting SentinelCleaner.exe from main installer..."
+        $extractionArgs = "e", "`"$InstallerFile`"", "-o`"$unpackDirPath`"", "SentinelCleaner.exe", "-y"
+        $extractionResult = Invoke-C9EndpointCommand -FilePath $sevenZipPath -ArgumentList $extractionArgs
+        
+        $extractedCleanerPath = Join-Path -Path $unpackDirPath -ChildPath "SentinelCleaner.exe"
+        if ($extractionResult.ExitCode -ne 0 -or -not (Invoke-ImmyCommand { Test-Path $using:extractedCleanerPath }) ) {
+            throw "[PHASE 5.3] FAILED to extract SentinelCleaner.exe. 7-Zip exit code: $($extractionResult.ExitCode). Error: $($extractionResult.StandardError)"
+        }
+        Write-Host "[PHASE 5.3] SUCCESS: Extracted cleaner to '$($extractedCleanerPath)'"
 
-        if (Test-IsAgentRemoved) {
-            Write-Host "[SUCCESS] Agent successfully removed by Legacy Cleaner."
-            return
+        # Step 5.4: Run the extracted cleaner
+        Write-Host "[PHASE 5.4] Running extracted legacy cleaner..."
+        $exitCodeFile = "C:\Windows\Temp\sc-exit-code.txt"
+        Invoke-ImmyCommand { if (Test-Path $using:exitCodeFile) { Remove-Item $using:exitCodeFile -Force } }
+        $nuclearResult = Invoke-C9EndpointCommand -FilePath $extractedCleanerPath
+        $cleanerExitCode = Invoke-ImmyCommand { if (Test-Path $using:exitCodeFile) { return (Get-Content $using:exitCodeFile) } else { return -1 } }
+        
+        if ($cleanerExitCode -eq '0') {
+            Write-Host "[SUCCESS] PHASE 5 appears successful based on status file."
+        } else {
+            Write-Warning "[PHASE 5] FAILED: Extracted cleaner did not report a successful exit code."
         }
     } else {
-         Write-Warning "Legacy Cleaner verification FAILED. Process exit code was $($process.ExitCode), and sc-exit-code.txt reported '$cleanerExitCode' or was not found."
+        Write-Warning "[PHASE 5] SKIPPED: Main installer file ($InstallerFile) not available for extraction."
     }
+    
+    # =========================================================================
+    # --- PHASE 6 & 7 (Reboot and Final Verification) ---
+    # =========================================================================
+    # (These phases remain unchanged)
+    Write-Host "[PHASE 6] One or more aggressive removal methods were used. A reboot is recommended."
+    try {
+        Restart-ComputerAndWait -TimeoutDuration (New-TimeSpan -Minutes 15)
+        Write-Host "Reboot completed. Proceeding with final verification."
+    } catch { throw "[PHASE 6] FAILED: The managed reboot process failed. Error: $_" }
 
-    # Final Verification
-    if (Test-IsAgentRemoved) {
-        Write-Host "[SUCCESS] Uninstallation Metascript completed successfully after final check."
+    Write-Host "[PHASE 7] Performing final verification of agent removal..."
+    if (-not (Get-C9SentinelOneInfo)) {
+        Write-Host "[SUCCESS] Uninstallation Playbook Completed. The SentinelOne agent has been successfully removed."
     } else {
-        throw "ALL REMOVAL METHODS FAILED. The agent is still present on the machine."
+        throw "[FINAL FAILURE] All automated removal methods have failed. The agent is still present on the machine."
     }
 
 } catch {
-    # This is the final, top-level catch block.
-    $errorMessage = "A fatal, unhandled error occurred in the Uninstallation Metascript: $([string]$_)"
+    # This is the master catch block for the entire playbook.
+    $errorMessage = "The Uninstallation Playbook failed with a fatal error: $($_.Exception.Message)"
     Write-Error $errorMessage
     throw $errorMessage
+} finally {
+    # This block runs regardless of success or failure, ensuring we clean up our temporary files.
+    # It now uses the dynamic $unpackDirPath variable.
+    if ($null -ne $unpackDirPath) {
+        Write-Host "--- Performing final cleanup of temporary unpack directory ---"
+        Invoke-ImmyCommand -ScriptBlock {
+            if (Test-Path $using:unpackDirPath) {
+                Write-Host "Removing temporary unpack directory: $($using:unpackDirPath)"
+                Remove-Item -Path $using:unpackDirPath -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
 }

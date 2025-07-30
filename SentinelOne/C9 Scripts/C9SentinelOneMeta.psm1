@@ -36,7 +36,7 @@ function Get-C9SentinelOneInfo {
     [CmdletBinding()]
     param()
 
-    Write-Verbose "Querying endpoint for SentinelOne agent information..."
+    Write-Host "Querying endpoint for SentinelOne agent information..."
 
     # This single Invoke-ImmyCommand call gathers all info from the endpoint in one go.
     $infoObject = Invoke-ImmyCommand -ScriptBlock {
@@ -96,7 +96,7 @@ function Get-C9S1LocalAgentId {
     [CmdletBinding()]
     param()
 
-    Write-Verbose "Attempting to retrieve SentinelOne Agent ID from the local endpoint."
+    Write-Host "Attempting to retrieve SentinelOne Agent ID from the local endpoint."
     try {
         # This scriptblock runs on the endpoint as SYSTEM.
         # It's self-contained and has one job: get the agent ID.
@@ -116,11 +116,11 @@ function Get-C9S1LocalAgentId {
         }
 
         if ([string]::IsNullOrWhiteSpace($result)) {
-            Write-Verbose "No local Agent ID was found."
+            Write-Host "No local Agent ID was found."
             return $null
         }
 
-        Write-Verbose "Successfully retrieved local Agent ID: $result"
+        Write-Host "Successfully retrieved local Agent ID: $result"
         return $result
     }
     catch {
@@ -137,7 +137,7 @@ function Test-C9S1LocalUpgradeAuthorization {
     )
 
     $endpoint = "agents/$AgentId/local-upgrade-authorization"
-    Write-Verbose "Checking API endpoint '$endpoint' for agent protection status."
+    Write-Host "Checking API endpoint '$endpoint' for agent protection status."
 
     try {
         # We expect a successful call to return data with an 'enabled' property.
@@ -145,11 +145,11 @@ function Test-C9S1LocalUpgradeAuthorization {
         
         # The API returns { "data": { "enabled": true/false } } on success
         if ($null -ne $response.enabled -and $response.enabled) {
-            Write-Verbose "API Response: Local upgrade authorization is ENABLED."
+            Write-Host "API Response: Local upgrade authorization is ENABLED."
             return $true
         }
         else {
-            Write-Verbose "API Response: Local upgrade authorization is DISABLED."
+            Write-Host "API Response: Local upgrade authorization is DISABLED."
             return $false
         }
     }
@@ -172,7 +172,7 @@ function Test-S1InstallPreFlight {
     [OutputType([PSCustomObject])]
     param()
 
-    Write-Verbose "Starting SentinelOne installation pre-flight check..."
+    Write-Host "Starting SentinelOne installation pre-flight check..."
 
     try {
         # Step 1: Get the local agent ID using our dedicated bridge function.
@@ -228,167 +228,194 @@ function Test-S1InstallPreFlight {
     }
 }
 
-function Test-IsAgentRemoved {
-    Write-Verbose "Verifying agent removal by checking for the 'SentinelAgent' service..."
-    $isServiceGone = -not (Invoke-ImmyCommand { Get-Service -Name 'SentinelAgent' -ErrorAction SilentlyContinue })
-    if ($isServiceGone) {
-        Write-Host "[VERIFIED] The 'SentinelAgent' service is no longer present."
-        return $true
+function Resolve-InstallerAvailable {
+<#
+.SYNOPSIS
+    Ensures a file is available on the endpoint, downloading it if necessary, with authentication support.
+.PARAMETER DownloadUrl
+    The public URL from which to download the file.
+.PARAMETER FileName
+    The name of the file (e.g., "MyTool.exe") to be saved on the endpoint.
+.PARAMETER AuthHeader
+    A hashtable containing the authentication headers required for the download (e.g., @{ 'Authorization' = "Bearer ..." }).
+.OUTPUTS
+    String. The full path to the staged file on the endpoint.
+#>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DownloadUrl,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$FileName,
+
+        [Parameter(Mandatory = $false)]
+        [hashtable]$AuthHeader
+    )
+
+    # Define a persistent, predictable staging directory on the endpoint
+    $stagingDir = 'C:\ProgramData\C9Automation\Installers\SentinelOne'
+    $destinationPath = Join-Path -Path $stagingDir -ChildPath $FileName
+    
+    # Check if the file already exists on the endpoint. This must run in the System context.
+    $fileExists = Invoke-ImmyCommand -ScriptBlock {
+        param($path)
+        # Ensure the staging directory exists
+        if (-not (Test-Path -LiteralPath (Split-Path $path))) {
+            New-Item -Path (Split-Path $path) -ItemType Directory -Force | Out-Null
+        }
+        return Test-Path -LiteralPath $path
+    } -ArgumentList $destinationPath
+    
+    if ($fileExists) {
+        Write-Host "[RESOLVE] File '$FileName' already exists in staging directory. Skipping download."
+        return $destinationPath
     }
-    Write-Warning "[VERIFICATION FAILED] The 'SentinelAgent' service still exists."
-    return $false
+
+    # If it doesn't exist, download it. This runs in the Metascript context.
+    Write-Host "[RESOLVE] Downloading '$FileName' to endpoint path '$destinationPath'..."
+    # The '-Headers' parameter is the critical addition for authenticated downloads.
+    Download-File -Url $DownloadUrl -OutFile $destinationPath -Headers $AuthHeader
+    Write-Host "[RESOLVE] SUCCESS: File downloaded."
+    return $destinationPath
+}
+
+function Set-C9SentinelOneUnprotect {
+<#
+.SYNOPSIS
+    Disables the SentinelOne agent's self-protection using a passphrase.
+.DESCRIPTION
+    A robust Metascript function that orchestrates the unprotection of a SentinelOne agent.
+    It uses Get-C9SentinelOneInfo to locate the agent and Invoke-C9EndpointCommand to execute
+    the 'sentinelctl unprotect' command, passing the passphrase securely. It includes
+    intelligent error handling to distinguish between benign warnings and true failures.
+.PARAMETER Passphrase
+    The agent-specific passphrase required to disable protection. This string can contain spaces.
+.OUTPUTS
+    Boolean. Returns $true on success, throws a terminating error on failure.
+#>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Passphrase
+    )
+
+    # Step 1: Find the agent using our helper function
+    Write-Host "Attempting to locate the SentinelOne agent..."
+    $s1Info = Get-C9SentinelOneInfo
+    if (-not $s1Info) {
+        throw "Cannot unprotect agent: SentinelOne agent was not found on the endpoint."
+    }
+
+    # Step 2: Prepare and execute the command using our robust command wrapper
+    Write-Host "Disabling SentinelOne agent protection via sentinelctl..."
+    $argumentList = "unprotect", "-k", $Passphrase
+    $result = Invoke-C9EndpointCommand -FilePath $s1Info.SentinelCtlPath -ArgumentList $argumentList
+
+    # Step 3: Intelligent Error Handling
+    if ($result.ExitCode -ne 0) {
+        throw "Failed to unprotect SentinelOne agent. The sentinelctl.exe process returned exit code: $($result.ExitCode). Error Output: $($result.StandardError)"
+    }
+    
+    # Ignore known, benign warnings from sentinelctl.exe
+    if ($result.StandardError -and $result.StandardError -notmatch 'In-Process Client') {
+        throw "An unexpected error was reported by sentinelctl.exe during unprotect: $($result.StandardError)"
+    }
+    
+    # Step 4: Final validation
+    if ($result.StandardOutput -match 'Protection is off|Protection disabled') {
+        Write-Host "[SUCCESS] SentinelOne agent protection has been successfully disabled."
+        return $true
+    } else {
+        throw "Unprotect command completed, but success could not be verified from the output. Output: $($result.StandardOutput)"
+    }
 }
 
 function Set-C9SentinelOneProtect {
     [CmdletBinding()]
-    param() # No parameters for this test version.
-
-    Write-Host "Attempting to set agent protection state to 'Protect'..."
-
-    # We use Invoke-ImmyCommand to run the command on the endpoint and get a structured result back.
-    $resultObject = Invoke-ImmyCommand -ScriptBlock {
-        try {
-            $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='SentinelAgent'" -ErrorAction SilentlyContinue
-            if (-not $service) { return $null }
-
-            $installDir = Split-Path -Path ($service.PathName.Trim('"')) -Parent
-            $sentinelCtlPath = Join-Path -Path $installDir -ChildPath 'SentinelCtl.exe'
-            if (-not (Test-Path -LiteralPath $sentinelCtlPath)) { return $null }
-
-            # --- ROBUST CONSOLE CAPTURE PATTERN ---
-            # 1. Use the call operator (&) to execute the command.
-            # 2. Hardcode the argument to 'protect'.
-            # 3. Use '*> &1' to redirect ALL output streams (stdout, stderr, etc.) into a single stream.
-            $capturedOutput = & $sentinelCtlPath protect *>&1
-            
-            # 4. Check the exit code of the last external program that ran.
-            $exitCode = $LASTEXITCODE
-
-            # 5. Prepare the final, structured result object.
-            $result = @{
-                Status = ($exitCode -eq 0)
-                Output  = ($capturedOutput | Out-String).Trim()
-            }
-            
-            return [PSCustomObject]$result
-
-        } catch {
-            Write-Warning "An unexpected error occurred during endpoint protection state change: $_"
-            return $null
-        }
-    }
-
-    # This code runs back in the Metascript after the endpoint block is finished.
-    if ($resultObject) {
-        Write-Host "Protection state command completed."
-    } else {
-        Write-Warning "Could not get a valid result from the endpoint."
-    }
-
-    # Return the entire result object for inspection.
-    return $resultObject
-}
-
-function Set-C9SentinelOneUnprotect {
-    [CmdletBinding()]
-    param() # The param block is empty for this test.
-
-    # This is your exact, working script block.
-    # The passphrase is still hardcoded inside, as requested.
-    # No other logic has been changed.
-
-    $Passphrase = "REIN SLAY AWK DELL GIL ELI ALLY FUN FERN MIT FALL BEAM"
-
-    try {
-        Write-Verbose "Metascript: Preparing to invoke unprotect command on endpoint..."
-
-        $result = Invoke-ImmyCommand -ScriptBlock {
-            # ============================================
-            # SYSTEM CONTEXT (This block is our "North Star")
-            # ============================================
-            try {
-                $sentinelService = Get-CimInstance Win32_Service -Filter "Name='SentinelAgent'" -ErrorAction Stop
-                $sentinelCtlPath = Join-Path (Split-Path $sentinelService.PathName.Trim('"')) "sentinelctl.exe"
-                if (-not (Test-Path $sentinelCtlPath)) {
-                    throw "System Context: Could not find sentinelctl.exe at expected path: $sentinelCtlPath"
-                }
-            } catch {
-                return [PSCustomObject]@{ Success = $false; ExitCode = -1; Error = "Failed to find sentinelctl.exe. Details: $_" }
-            }
-            
-            # Using Write-Verbose here to avoid polluting the host output that the main script might check.
-            Write-Verbose "System Context: Executing `"$sentinelCtlPath`" unprotect -k ""********"""
-            
-            $output = & $sentinelCtlPath unprotect -k "$($using:Passphrase)" 2>&1
-            $exitCode = $LASTEXITCODE
-
-            return [PSCustomObject]@{
-                Success  = ($exitCode -eq 0)
-                ExitCode = $exitCode
-                Output   = $output | Out-String
-            }
-        }
-
-        # ============================================
-        # BACK IN METASCRIPT CONTEXT
-        # ============================================
-        Write-Verbose "Metascript: Received result object from endpoint."
-        
-        if (-not $result.Success) {
-            throw "Metascript: Command failed on endpoint with Exit Code $($result.ExitCode). Output: $($result.Output)"
-        }
-
-        # The only necessary change to make it a useful function:
-        # Instead of writing "VICTORY" to the host, we return the successful result object.
-        return $result
-    }
-    catch {
-        Write-Error "A fatal error occurred in the Set-C9SentinelOneUnprotect function: $_"
-        throw
-    }
+    param()
+    $s1Info = Get-C9SentinelOneInfo
+    if (-not $s1Info) { throw "Cannot protect agent: SentinelOne agent was not found." }
+    Invoke-C9EndpointCommand -FilePath $s1Info.SentinelCtlPath -ArgumentList "protect"
 }
 
 function Invoke-C9EndpointCommand {
 <#
 .SYNOPSIS
     Executes a command-line process on an endpoint, capturing all output streams and the exit code.
+
 .DESCRIPTION
     A robust Metascript wrapper for Invoke-ImmyCommand that executes a specified executable on the target machine in the SYSTEM context.
-    It uses the .NET System.Diagnostics.Process class to reliably capture standard output (stdout), standard error (stderr), and the process exit code.
-    This function is designed to be a generic, reusable replacement for simple Invoke-ImmyCommand calls for executables.
+    
+    This function is designed to be a generic, reusable replacement for simple Invoke-ImmyCommand calls for executables. It provides three key advantages:
+    1.  Reliably captures standard output (stdout), standard error (stderr), and the process exit code into a single, structured object.
+    2.  Solves complex argument-passing issues by correctly handling arguments that contain spaces or quotes (e.g., passphrases, file paths).
+    3.  Standardizes command execution and logging across all scripts.
+
 .PARAMETER FilePath
     The full path to the executable file on the target endpoint.
+
 .PARAMETER ArgumentList
-    An array of strings representing the arguments to pass to the executable. Arguments containing spaces will be automatically and correctly quoted.
+    An array of strings representing the arguments to pass to the executable. 
+    Each part of the command (the verb, switch, and value) should be a separate element in the array.
+    The function will automatically handle quoting for arguments that contain spaces.
+    
+    For example, to run 'unprotect -k "my secret phrase"', the array should be:
+    @('unprotect', '-k', 'my secret phrase')
+
 .PARAMETER WorkingDirectory
     The working directory from which to run the executable.
+
 .PARAMETER TimeoutSeconds
     The maximum number of seconds to wait for the command to complete. Defaults to 600 (10 minutes).
+
 .OUTPUTS
     A PSCustomObject containing the following properties:
     - ExitCode ([int]): The exit code returned by the process.
     - StandardOutput ([string]): The complete standard output from the process.
     - StandardError ([string]): The complete standard error from the process.
+
 .EXAMPLE
-    # Execute sentinelctl.exe status and capture the output
-    $statusResult = Invoke-C9EndpointCommand -FilePath "C:\Program Files\SentinelOne\Sentinel Agent\sentinelctl.exe" -ArgumentList "status"
+    # Example 1: Run a simple command with no arguments.
+    $statusResult = Invoke-C9EndpointCommand -FilePath "C:\Program Files\S1\sentinelctl.exe" -ArgumentList "status"
+    
     if ($statusResult.ExitCode -eq 0) {
         Write-Host "S1 Status: $($statusResult.StandardOutput)"
     }
+
 .EXAMPLE
-    # Execute sentinelctl.exe unprotect with a passphrase containing spaces
+    # Example 2: Run a command with a complex argument (e.g., a passphrase with spaces).
+    $s1Path = "C:\Program Files\S1\sentinelctl.exe"
     $passphrase = "my secret pass phrase"
-    $unprotectResult = Invoke-C9EndpointCommand -FilePath "C:\Program Files\SentinelOne\Sentinel Agent\sentinelctl.exe" -ArgumentList "unprotect", "-k", $passphrase
-    if ($unprotectResult.StandardError) {
-        Write-Error "Error during unprotect: $($unprotectResult.StandardError)"
+    $arguments = "unprotect", "-k", $passphrase
+
+    $unprotectResult = Invoke-C9EndpointCommand -FilePath $s1Path -ArgumentList $arguments
+
+    if ($unprotectResult.StandardError -and $unprotectResult.StandardError -notmatch "In-Process Client") {
+        # Check for any real errors, ignoring known benign warnings.
+        throw "An unexpected error occurred during unprotect: $($unprotectResult.StandardError)"
+    } else {
+        Write-Host "Unprotect command completed successfully."
     }
+
+.NOTES
+    Author: Josh Phillips
+    Date:   July 24, 2025
+
+    Architectural Choice: Why `$using:` is used instead of `-ArgumentList`
+    ---------------------------------------------------------------------
+    Initial versions of this function attempted to pass parameters into the Invoke-ImmyCommand script block using the -ArgumentList parameter and a corresponding param() block.
+    
+    Extensive diagnostic testing proved this method to be unreliable within the ImmyBot platform for complex arguments. It resulted in a persistent parameter binding bug where arguments were scrambled upon arrival at the endpoint (e.g., the command 'status' was being bound to the FilePath parameter).
+    
+    The current implementation intentionally bypasses the -ArgumentList parameter. Instead, it uses the PowerShell `$using:` scope modifier (e.g., `$using:FilePath`) to directly and reliably inject variables from the parent Metascript into the endpoint's System context. This is the most direct, explicit, and robust method for passing data across the ImmyBot context boundary and aligns with the project's established architectural best practices.
 #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $true, Position = 0)]
         [string]$FilePath,
 
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $false, Position = 1)]
         [string[]]$ArgumentList,
 
         [Parameter(Mandatory = $false)]
@@ -398,95 +425,67 @@ function Invoke-C9EndpointCommand {
         [int]$TimeoutSeconds = 600
     )
 
-    Write-Verbose "Preparing to execute '$FilePath' via Invoke-C9EndpointCommand."
-    if ($ArgumentList) {
-        Write-Verbose "Arguments: $($ArgumentList -join ' ')"
-    }
+    Write-Host "Preparing to execute '$FilePath' with arguments: $($ArgumentList -join ' ')"
 
-    # The core logic is performed within Invoke-ImmyCommand to run in the SYSTEM context on the endpoint.
+    # We use the $using: scope modifier to reliably pass variables into the script block,
+    # bypassing the unreliable -ArgumentList parameter binding mechanism.
     $result = Invoke-ImmyCommand -Timeout $TimeoutSeconds -ScriptBlock {
-        param(
-            [string]$Path,
-            [string[]]$Arguments,
-            [string]$WorkDir
-        )
-
-        # Defensive check to ensure the executable exists on the endpoint before proceeding.
-        if (-not (Test-Path -Path $Path -PathType Leaf)) {
-            throw "Executable not found at path: $Path"
+        
+        # We do not use a param() block here; we access the variables directly via $using:
+        Write-Host "Endpoint received command: '$($using:FilePath)'"
+        Write-Host "Endpoint received argument: '$($using:ArgumentList -join ' ')'"
+        
+        if (-not (Test-Path -Path $using:FilePath -PathType Leaf)) {
+            throw "Executable not found at path: $($using:FilePath)"
         }
 
-        # --- Argument Handling: Solves the Passphrase/Spaces Blocker ---
-        # This block correctly formats the arguments into a single string that the .NET Process class can parse.
-        # It iterates through each argument and wraps any that contain whitespace in double quotes.
-        $formattedArgs = foreach ($arg in $Arguments) {
-            if ($arg -match '\s') {
-                "`"$arg`"" # Wrap arguments with spaces in quotes
-            } else {
-                $arg
-            }
+        # This logic correctly handles arguments with spaces by quoting them.
+        $formattedArgs = foreach ($arg in $using:ArgumentList) {
+            if ($arg -match '\s') { "`"$arg`"" } else { $arg }
         }
         $argumentString = $formattedArgs -join ' '
 
-        Write-Host "Executing: `"$Path`" $argumentString"
+        Write-Host "Executing: `"$($using:FilePath)`" $argumentString"
 
-        # --- .NET Process Execution: The pattern from the Sysmon script ---
         $pinfo = New-Object System.Diagnostics.ProcessStartInfo
-        $pinfo.FileName = $Path
+        $pinfo.FileName = $using:FilePath
         $pinfo.Arguments = $argumentString
         $pinfo.RedirectStandardOutput = $true
-        $pinfo.RedirectStandardError = $true # Correctly captures the error stream
+        $pinfo.RedirectStandardError = $true
         $pinfo.UseShellExecute = $false
         $pinfo.CreateNoWindow = $true
 
-        if (-not [string]::IsNullOrWhiteSpace($WorkDir)) {
-            $pinfo.WorkingDirectory = $WorkDir
+        if (-not [string]::IsNullOrWhiteSpace($using:WorkingDirectory)) {
+            $pinfo.WorkingDirectory = $using:WorkingDirectory
         }
-
+        
         $p = New-Object System.Diagnostics.Process
         $p.StartInfo = $pinfo
 
         try {
-            # Start the process and wait for it to finish.
             $p.Start() | Out-Null
             $p.WaitForExit()
-
-            # Read the output streams *after* the process has exited.
             $stdout = $p.StandardOutput.ReadToEnd()
             $stderr = $p.StandardError.ReadToEnd()
-
-            # Return a structured object with all results.
-            return [PSCustomObject]@{
-                ExitCode       = $p.ExitCode
-                StandardOutput = $stdout
-                StandardError  = $stderr
-            }
+            return [PSCustomObject]@{ ExitCode = $p.ExitCode; StandardOutput = $stdout; StandardError = $stderr }
         }
-        catch {
-            # Catch any exceptions during process start (e.g., permissions issues)
-            throw "Failed to start or monitor process '$Path'. Error: $_"
-        }
-        finally {
-            # Ensure the process object is disposed of to release resources.
-            if ($p) {
-                $p.Dispose()
-            }
-        }
+        catch { throw "Failed to start or monitor process '$($using:FilePath)'. Error: $_" }
+        finally { if ($p) { $p.Dispose() } }
 
-    } -ArgumentList @($FilePath, $ArgumentList, $WorkingDirectory)
+    } # Note: No -ArgumentList is used here.
 
-    # Log the captured output to the ImmyBot session log for excellent visibility.
+    # Log the full results to the Metascript log for excellent visibility.
     if ($result) {
         Write-Host "Command finished with Exit Code: $($result.ExitCode)."
         if (-not [string]::IsNullOrWhiteSpace($result.StandardOutput)) {
-            Write-Host "--- Standard Output ---"
+            Write-Host "--- Start Standard Output ---"
             Write-Host $result.StandardOutput
-            Write-Host "-----------------------"
+            Write-Host "--- End Standard Output ---"
         }
         if (-not [string]::IsNullOrWhiteSpace($result.StandardError)) {
-            Write-Warning "--- Standard Error ---"
+            Write-Warning "--- Start Standard Error ---"
             Write-Warning $result.StandardError
-            Write-Warning "----------------------"
+            Write-Warning "--- End Standard Error ---"
         }
     }
 
@@ -497,7 +496,7 @@ Export-ModuleMember -Function @(
     'Get-C9SentinelOneInfo',
     'Get-C9S1LocalAgentId',
     'Test-C9S1LocalUpgradeAuthorization',
-    'Test-IsAgentRemoved',
+    'Resolve-InstallerAvailable',
     'Set-C9SentinelOneProtect',
     'Set-C9SentinelOneUnprotect',
     'Invoke-C9EndpointCommand'

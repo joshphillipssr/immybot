@@ -1,0 +1,156 @@
+function Invoke-C9EndpointCommand {
+<#
+.SYNOPSIS
+    Executes a command-line process on an endpoint, capturing all output streams and the exit code.
+
+.DESCRIPTION
+    A robust Metascript wrapper for Invoke-ImmyCommand that executes a specified executable on the target machine in the SYSTEM context.
+    
+    This function is designed to be a generic, reusable replacement for simple Invoke-ImmyCommand calls for executables. It provides three key advantages:
+    1.  Reliably captures standard output (stdout), standard error (stderr), and the process exit code into a single, structured object.
+    2.  Solves complex argument-passing issues by correctly handling arguments that contain spaces or quotes (e.g., passphrases, file paths).
+    3.  Standardizes command execution and logging across all scripts.
+
+.PARAMETER FilePath
+    The full path to the executable file on the target endpoint.
+
+.PARAMETER ArgumentList
+    An array of strings representing the arguments to pass to the executable. 
+    Each part of the command (the verb, switch, and value) should be a separate element in the array.
+    The function will automatically handle quoting for arguments that contain spaces.
+    
+    For example, to run 'unprotect -k "my secret phrase"', the array should be:
+    @('unprotect', '-k', 'my secret phrase')
+
+.PARAMETER WorkingDirectory
+    The working directory from which to run the executable.
+
+.PARAMETER TimeoutSeconds
+    The maximum number of seconds to wait for the command to complete. Defaults to 600 (10 minutes).
+
+.OUTPUTS
+    A PSCustomObject containing the following properties:
+    - ExitCode ([int]): The exit code returned by the process.
+    - StandardOutput ([string]): The complete standard output from the process.
+    - StandardError ([string]): The complete standard error from the process.
+
+.EXAMPLE
+    # Example 1: Run a simple command with no arguments.
+    $statusResult = Invoke-C9EndpointCommand -FilePath "C:\Program Files\S1\sentinelctl.exe" -ArgumentList "status"
+    
+    if ($statusResult.ExitCode -eq 0) {
+        Write-Host "S1 Status: $($statusResult.StandardOutput)"
+    }
+
+.EXAMPLE
+    # Example 2: Run a command with a complex argument (e.g., a passphrase with spaces).
+    $s1Path = "C:\Program Files\S1\sentinelctl.exe"
+    $passphrase = "my secret pass phrase"
+    $arguments = "unprotect", "-k", $passphrase
+
+    $unprotectResult = Invoke-C9EndpointCommand -FilePath $s1Path -ArgumentList $arguments
+
+    if ($unprotectResult.StandardError -and $unprotectResult.StandardError -notmatch "In-Process Client") {
+        # Check for any real errors, ignoring known benign warnings.
+        throw "An unexpected error occurred during unprotect: $($unprotectResult.StandardError)"
+    } else {
+        Write-Host "Unprotect command completed successfully."
+    }
+
+.NOTES
+    Author: Josh Phillips
+    Date:   July 24, 2025
+
+    Architectural Choice: Why `$using:` is used instead of `-ArgumentList`
+    ---------------------------------------------------------------------
+    Initial versions of this function attempted to pass parameters into the Invoke-ImmyCommand script block using the -ArgumentList parameter and a corresponding param() block.
+    
+    Extensive diagnostic testing proved this method to be unreliable within the ImmyBot platform for complex arguments. It resulted in a persistent parameter binding bug where arguments were scrambled upon arrival at the endpoint (e.g., the command 'status' was being bound to the FilePath parameter).
+    
+    The current implementation intentionally bypasses the -ArgumentList parameter. Instead, it uses the PowerShell `$using:` scope modifier (e.g., `$using:FilePath`) to directly and reliably inject variables from the parent Metascript into the endpoint's System context. This is the most direct, explicit, and robust method for passing data across the ImmyBot context boundary and aligns with the project's established architectural best practices.
+#>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$FilePath,
+
+        [Parameter(Mandatory = $false, Position = 1)]
+        [string[]]$ArgumentList,
+
+        [Parameter(Mandatory = $false)]
+        [string]$WorkingDirectory,
+
+        [Parameter(Mandatory = $false)]
+        [int]$TimeoutSeconds = 600
+    )
+
+    Write-Host "Preparing to execute '$FilePath' with arguments: $($ArgumentList -join ' ')"
+
+    # We use the $using: scope modifier to reliably pass variables into the script block,
+    # bypassing the unreliable -ArgumentList parameter binding mechanism.
+    $result = Invoke-ImmyCommand -Timeout $TimeoutSeconds -ScriptBlock {
+        
+        # We do not use a param() block here; we access the variables directly via $using:
+        Write-Host "Endpoint received command: '$($using:FilePath)'"
+        Write-Host "Endpoint received argument: '$($using:ArgumentList -join ' ')'"
+        
+        if (-not (Test-Path -Path $using:FilePath -PathType Leaf)) {
+            throw "Executable not found at path: $($using:FilePath)"
+        }
+
+        # This logic correctly handles arguments with spaces by quoting them.
+        $formattedArgs = foreach ($arg in $using:ArgumentList) {
+            if ($arg -match '\s') { "`"$arg`"" } else { $arg }
+        }
+        $argumentString = $formattedArgs -join ' '
+
+        Write-Host "Executing: `"$($using:FilePath)`" $argumentString"
+
+        $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+        $pinfo.FileName = $using:FilePath
+        $pinfo.Arguments = $argumentString
+        $pinfo.RedirectStandardOutput = $true
+        $pinfo.RedirectStandardError = $true
+        $pinfo.UseShellExecute = $false
+        $pinfo.CreateNoWindow = $true
+
+        if (-not [string]::IsNullOrWhiteSpace($using:WorkingDirectory)) {
+            $pinfo.WorkingDirectory = $using:WorkingDirectory
+        }
+        
+        $p = New-Object System.Diagnostics.Process
+        $p.StartInfo = $pinfo
+
+        try {
+            $p.Start() | Out-Null
+            $p.WaitForExit()
+            $stdout = $p.StandardOutput.ReadToEnd()
+            $stderr = $p.StandardError.ReadToEnd()
+            return [PSCustomObject]@{ ExitCode = $p.ExitCode; StandardOutput = $stdout; StandardError = $stderr }
+        }
+        catch { throw "Failed to start or monitor process '$($using:FilePath)'. Error: $_" }
+        finally { if ($p) { $p.Dispose() } }
+
+    } # Note: No -ArgumentList is used here.
+
+    # Log the full results to the Metascript log for excellent visibility.
+    if ($result) {
+        Write-Host "Command finished with Exit Code: $($result.ExitCode)."
+        if (-not [string]::IsNullOrWhiteSpace($result.StandardOutput)) {
+            Write-Host "--- Start Standard Output ---"
+            Write-Host $result.StandardOutput
+            Write-Host "--- End Standard Output ---"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($result.StandardError)) {
+            Write-Warning "--- Start Standard Error ---"
+            Write-Warning $result.StandardError
+            Write-Warning "--- End Standard Error ---"
+        }
+    }
+
+    return $result
+}
+
+Export-ModuleMember -Function @(
+    'Invoke-C9EndpointCommand'
+)

@@ -17,12 +17,12 @@ function Connect-C9S1API {
     # This does not use Invoke-C9S1RestMethod to avoid dependency issues before the context is populated.
     $ValidationEndpoint = "$($S1Uri)web/api/v2.1/system/info"
     try {
-        Write-Verbose "Validating credentials against endpoint: $ValidationEndpoint"
+        Write-Host "Validating credentials against endpoint: $ValidationEndpoint"
         $SystemInfo = Invoke-RestMethod -Uri $ValidationEndpoint -Headers $S1AuthHeader -Method Get -ErrorAction Stop
 
         # The S1 API wraps the payload in a 'data' property.
         if ($SystemInfo.data.latestAgentVersion) {
-            Write-Verbose "Successfully authenticated to SentinelOne API. Latest Agent Version: $($SystemInfo.data.latestAgentVersion)"
+            Write-Host "Successfully authenticated to SentinelOne API. Latest Agent Version: $($SystemInfo.data.latestAgentVersion)"
             # On success, return the validated header.
             return $S1AuthHeader
         } else {
@@ -56,7 +56,7 @@ function Invoke-C9S1RestMethod {
 
     if ($Body) {
         $params.body = $body
-        Write-Verbose "ThisBody:`r`n$($params.Body)"
+        Write-Host "ThisBody:`r`n$($params.Body)"
     }
 
     # REFACTOR: This function now relies *exclusively* on the IntegrationContext.
@@ -73,15 +73,15 @@ function Invoke-C9S1RestMethod {
     try {
         do {
             if ($QueryParameters) {
-                Write-Verbose "QueryParameters: $($QueryParameters | Out-String)"
+                Write-Host "QueryParameters: $($QueryParameters | Out-String)"
                 $UriWithQuery = Add-UriQueryParameter -Uri $Uri -Parameter $QueryParameters
                 $UriWithQuery = $UriWithQuery.ToString().Replace("+", "%20")
             }
-            Write-Verbose $UriWithQuery
+            Write-Host $UriWithQuery
             $Results = $null
-            Write-Verbose "Executing API call to final constructed URI: $UriWithQuery"
+            Write-Host "Executing API call to final constructed URI: $UriWithQuery"
             Invoke-RestMethod -Uri $UriWithQuery -Headers $AuthHeader @params -ErrorAction Stop | Tee-Object -Variable Results | Select-Object -Expand data 
-            $Results | Format-List * | Out-String | Write-Verbose
+            $Results | Format-List * | Out-String | Write-Host
             
             if ($Results.pagination -and $Results.pagination.nextcursor) {
                 $QueryParameters.cursor = $Results.pagination.nextcursor
@@ -261,7 +261,7 @@ function Get-C9S1AvailablePackages {
 
     # This now works because Invoke-C9S1RestMethod will use the credentials from the context.
     $DownloadLinks = Invoke-C9S1RestMethod -Endpoint "update/agent/packages" -QueryParameters $QueryParameters
-    Write-Verbose "Retrieved $($DownloadLinks.Count) package links. Now grouping and prioritizing..."
+    Write-Host "Retrieved $($DownloadLinks.Count) package links. Now grouping and prioritizing..."
 
     # Your proven logic for grouping and prioritizing .exe over .msi remains unchanged.
     $GroupedVersions = [ordered]@{}
@@ -309,12 +309,12 @@ function Get-C9S1AgentPassphrase {
             uuid = $AgentId
         }
 
-        Write-Verbose "Querying passphrase endpoint with Agent UUID: $AgentId..."
+        Write-Host "Querying passphrase endpoint with Agent UUID: $AgentId..."
         $response = Invoke-C9S1RestMethod -Endpoint "agents/passphrases" -QueryParameters $queryParameters
         
         # The response is an array inside the 'data' property. We take the first item.
         if ($response -and $response.Count -gt 0) {
-            Write-Verbose "Successfully retrieved passphrase."
+            Write-Host "Successfully retrieved passphrase."
             return $response[0].passphrase
         }
     
@@ -327,3 +327,12 @@ function Get-C9S1AgentPassphrase {
     }
 }
 
+Export-ModuleMember -Function @(
+    "Connect-C9S1API",
+    "Invoke-C9S1RestMethod",
+    "Get-C9S1AuthHeader",
+    "Get-C9S1Site",
+    "Get-C9S1Agent",
+    "Get-C9S1AvailablePackages",
+    "Get-C9S1AgentPassphrase"
+)
