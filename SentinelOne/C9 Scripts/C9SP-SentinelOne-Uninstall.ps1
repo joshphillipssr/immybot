@@ -24,7 +24,7 @@ $s1AgentState = Get-C9SentinelOneInfo
 $rebootWillBeRequired = ($null -ne $s1AgentState.Service)
 
 if ($rebootWillBeRequired) {
-    Write-Host "[$ScriptName] [CONDITION] Active S1 services exist. A post-uninstall reboot is mandatory."
+    Write-Host "[$ScriptName] [CONDITION] Active S1 services exist. A post-uninstall reboot is mandatory and will be required."
     
     # Use our new decision logic for PreAction scenario
     Write-Host "[$ScriptName] [DECISION] Evaluating pre-action safety using comprehensive decision logic..."

@@ -714,8 +714,8 @@ function Get-C9RebootPolicyContext {
 
     # Initialize result object with all possible properties
     $result = [ordered]@{
-        RebootPreference                    = $null
-        PromptTimeoutAction                 = $null
+        RebootPreference                   = $null
+        PromptTimeoutAction                = $null
         AutoConsentToReboots               = $null
         PromptTimeout                      = $null
         IsRebootPreferenceAvailable        = $false
