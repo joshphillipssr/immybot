@@ -1,10 +1,9 @@
 # =================================================================================
-# Name:     C9SP-SentinelOne-Uninstall Script
+# Name:     C9SP-SentinelOne-Uninstall Script (Refactored)
 # Author:   Josh Phillips
 # Contact:  josh@c9cg.com
 # Docs:     https://immydocs.c9cg.com
 # =================================================================================
-
 
 # --- Preamble and Parameter Declaration ---
 param(
@@ -13,11 +12,6 @@ param(
 
 # $VerbosePreference = 'Continue'
 # $ProgressPreference = 'SilentlyContinue'
-
-Write-Host -ForegroundColor Cyan "[$ScriptName] Current system reboot policy is: '$rebootPreference'"
-
-# State-tracking variable. It will be set to $true ONLY if we are overriding a 'Suppress' policy.
-$forceRebootOverride = $false
 
 # Import all modules needed for the entire script's operation.
 Import-Module "C9MetascriptHelpers"
@@ -31,18 +25,18 @@ $rebootWillBeRequired = ($null -ne $s1AgentState.Service)
 
 if ($rebootWillBeRequired) {
     Write-Host "[$ScriptName] [CONDITION] Active S1 services exist. A post-uninstall reboot is mandatory."
-
-    if ($RebootPreference -eq 'Suppress') {
-        Write-Host "[$ScriptName] [POLICY] Platform policy is 'Suppress'. Checking for override conditions..."
-        if (Test-C9IsUserLoggedIn) {
-            throw "[$ScriptName] HALT: A reboot is required, but the platform policy is 'Suppress' and the endpoint is attended. Aborting."
-        } else {
-            Write-Host "[$ScriptName] [OVERRIDE] Endpoint is unattended. Overriding 'Suppress' policy to proceed with mandatory cleanup."
-            # This is the critical state change. We are now in an override state.
-            $forceRebootOverride = $true
-        }
-    } else {
-        Write-Host "[$ScriptName] [PASS] Platform reboot policy is '$($RebootPreference)', which permits a required reboot. Proceeding..."
+    
+    # Use our new decision logic for PreAction scenario
+    Write-Host "[$ScriptName] [DECISION] Evaluating pre-action safety using comprehensive decision logic..."
+    $preActionDecision = Test-C9RebootDecision -Scenario PreAction -OverrideSuppression $true -MaxUserIdleMinutes 120
+    
+    if (-not $preActionDecision.ShouldProceed) {
+        throw "[$ScriptName] HALT: Cannot proceed with S1 uninstall. Reason: $($preActionDecision.Reason)"
+    }
+    
+    Write-Host "[$ScriptName] [PASS] Pre-action evaluation complete: $($preActionDecision.Reason)"
+    if ($preActionDecision.OverrideApplied) {
+        Write-Host "[$ScriptName] [OVERRIDE] Platform policy override was applied for critical S1 operation."
     }
 } else {
     Write-Host "[$ScriptName] [CONDITION] No S1 services detected. Proceeding with non-invasive remnant cleanup."
@@ -51,8 +45,7 @@ Write-Host "[$ScriptName] Phase 1 Complete. Proceeding to main playbook."
 
 # --- Phase 2: Main Uninstallation Playbook ---
 try {
-    # ... (Trigger file, credential retrieval, etc. - this part of the script remains unchanged)
-
+    # Trigger file, credential retrieval, etc. - this part of the script remains unchanged
     Write-Host "[$ScriptName] Checking for uninstall trigger file..."
     $triggerFileDir = "C:\ProgramData\ImmyBot\S1"; $triggerFileName = "s1_is_null.txt"; $newFileName = "s1_isnot_null.txt"
     Invoke-ImmyCommand {
@@ -70,6 +63,7 @@ try {
     $Passphrase = $null
     $siteToken = $null
 
+    # Try block for retrieving passphrase
     try {
         Write-Host "[$ScriptName] Attempting to retrieve agent passphrase..."
         $Passphrase = Get-IntegrationAgentUninstallToken -ErrorAction Stop
@@ -78,6 +72,7 @@ try {
         Write-Warning "[$ScriptName] Could not retrieve agent passphrase. This is expected for an orphaned agent."
     }
 
+    # Try block for retrieving site token
     try {
         Write-Host "[$ScriptName] Attempting to retrieve site token..."
         $siteToken = Get-IntegrationAgentInstallToken -ErrorAction Stop
@@ -86,7 +81,7 @@ try {
         Write-Warning "[$ScriptName] Could not retrieve site token. The cleaner command may fail."
     }
 
-    # --- Pre-Flight Checks with Override Logic ---
+    # pre-flight MsiExec check
     Write-Host "[$ScriptName] Running inline pre-flight checks..."
     try {
         Test-MsiExecMutex -ErrorAction Stop
@@ -95,33 +90,34 @@ try {
         throw "[$ScriptName] Pre-flight check failed: MSI installation in progress."
     }
 
-    if (Test-PendingReboot) {
-        Write-Warning "[$ScriptName] A pending reboot was detected. This must be cleared before proceeding."
+    # pre-flight reboot clearance
+    Write-Host "[$ScriptName] [DECISION] Evaluating pending reboot clearance using comprehensive decision logic..."
+    $clearPendingDecision = Test-C9RebootDecision -Scenario ClearPending -OverrideSuppression $true -MaxUserIdleMinutes 120
+    
+    if ($clearPendingDecision.ShouldReboot) {
+        Write-Host "[$ScriptName] [ACTION] Clearing pending reboot as recommended: $($clearPendingDecision.Reason)"
         
-        # Here we READ the state flag to decide how to reboot.
-        if ($forceRebootOverride) {
-            Write-Host "[$ScriptName] [OVERRIDE] Forcing pre-flight reboot due to unattended 'Suppress' override."
-            try {
-                Restart-ComputerAndWait -Force -TimeoutDuration (New-TimeSpan -Minutes 15)
-            } catch {
-                throw "FATAL: Pre-flight reboot failed. Error: $_"
-            }
-        } else {
-            Write-Host "[$ScriptName] Attempting mandatory pre-flight reboot, respecting platform policy."
-            try {
-                Restart-ComputerAndWait -TimeoutDuration (New-TimeSpan -Minutes 15)
-            } catch {
-                throw "FATAL: Pre-flight reboot failed. Error: $_"
-            }
+        if ($clearPendingDecision.OverrideApplied) {
+            Write-Host "[$ScriptName] [OVERRIDE] Platform policy override applied for critical S1 operation."
         }
-        Write-Host "[$ScriptName] SUCCESS: The pre-flight reboot completed."
+        
+        try {
+            # Delegate to native function - it will handle user interaction based on platform policy
+            Write-Host "[$ScriptName] Initiating pre-flight reboot (timeout: 15 minutes)..."
+            Restart-ComputerAndWait -TimeoutDuration (New-TimeSpan -Minutes 15)
+            Write-Host "[$ScriptName] SUCCESS: The pre-flight reboot completed."
+        } catch {
+            throw "FATAL: Pre-flight reboot failed. Error: $_"
+        }
+    } elseif (-not $clearPendingDecision.ShouldProceed) {
+        throw "[$ScriptName] HALT: Cannot clear pending reboot safely. Reason: $($clearPendingDecision.Reason)"
     } else {
-        Write-Host "[$ScriptName] No pending reboot detected."
+        Write-Host "[$ScriptName] [PASS] No pending reboot clearance needed: $($clearPendingDecision.Reason)"
     }
+    
     Write-Host "[$ScriptName] Pre-flight checks complete."
 
-    # ... (The rest of the uninstallation logic: unprotect, cleaner, etc. remains unchanged) ...
-
+    # if passphrase found - S1 Unprotect and Cleaner execution
     if ($Passphrase) {
         Write-Host "[$ScriptName] Passphrase found. Attempting 'sentinelctl.exe unprotect'..."
         try {
@@ -139,6 +135,7 @@ try {
         Write-Host "[$ScriptName] No passphrase found. Skipping unprotect step."
     }
 
+    # if site token found - run the cleaner
     if ($siteToken) {
         Write-Host "[$ScriptName] Site token found. Proceeding to cleaner..."
         $exitCodeFile = "C:\Windows\Temp\s1_uninstall_exit_code.txt"
@@ -172,15 +169,32 @@ try {
         Write-Warning "[$ScriptName] SKIPPED: The modern cleaner method requires a site token."
     }
 
-    # --- Phase 3: Post-Uninstall Reboot ---
+    # Post-Uninstall Reboot
     if ($rebootWillBeRequired) {
-        Write-Host "[$ScriptName] Phase 3: Uninstallation complete. Initiating mandatory reboot."
-        if (-not (Test-C9IsUserLoggedIn)) {
-            Write-Host "[$ScriptName] Endpoint is unattended. Initiating immediate, forceful reboot."
-            Restart-ComputerAndWait -Force -TimeoutDuration (New-TimeSpan -Minutes 15)
+        Write-Host "[$ScriptName] Phase 3: Uninstallation complete. Evaluating mandatory post-action reboot..."
+        
+        # new decision logic for PostAction scenario
+        $postActionDecision = Test-C9RebootDecision -Scenario PostAction -AllowUserCancel $false -MaxUserIdleMinutes 120
+        
+        Write-Host "[$ScriptName] [DECISION] Post-action evaluation: $($postActionDecision.Reason)"
+        
+        if ($postActionDecision.ShouldReboot) {
+            if ($postActionDecision.OverrideApplied) {
+                Write-Host "[$ScriptName] [OVERRIDE] Platform policy override applied - S1 changes mandate reboot completion."
+            }
+            
+            Write-Host "[$ScriptName] [ACTION] Initiating mandatory post-uninstall reboot..."
+            Write-Host "[$ScriptName] User interaction mode: $($postActionDecision.UserInteractionMode)"
+            
+            try {
+                # Delegate to native function - it will handle user interaction appropriately
+                Restart-ComputerAndWait -TimeoutDuration (New-TimeSpan -Minutes 15)
+                Write-Host "[$ScriptName] SUCCESS: Post-uninstall reboot completed."
+            } catch {
+                throw "FATAL: Post-uninstall reboot failed. Error: $_"
+            }
         } else {
-            Write-Host "[$ScriptName] Endpoint is attended. Delegating reboot decision to platform policy."
-            Restart-ComputerAndWait -TimeoutDuration (New-TimeSpan -Minutes 15)
+            Write-Warning "[$ScriptName] Unexpected: PostAction scenario did not recommend reboot. This may indicate an issue."
         }
     } else {
         Write-Host "[$ScriptName] Phase 3: Remnant cleanup complete. No reboot was required."
@@ -193,4 +207,3 @@ try {
     $errorMessage = "[$ScriptName] The Uninstallation failed with a fatal error: $($_.Exception.Message)"
     throw $errorMessage
 }
-    
