@@ -665,7 +665,916 @@ function Get-C9UserIdleTime {
     return $idleTimeSpan
 }
 
+function Get-C9RebootPolicyContext {
+    <#
+    .SYNOPSIS
+        Gets all available platform reboot policy variables and their current state.
+    
+    .DESCRIPTION
+        This function consolidates all ImmyBot platform reboot policy variables into a single
+        structured object. It checks for the availability and current values of all reboot-related
+        variables that are passed into the metascript context by the platform.
+        
+        This is a foundational "Get" function that provides clean data collection for downstream
+        decision logic functions.
+    
+    .PARAMETER Computer
+        The ImmyBot computer object. Defaults to the computer in the current context via (Get-ImmyComputer).
+        Included for consistency with other module functions, though policy variables are context-based.
+    
+    .EXAMPLE
+        $policyContext = Get-C9RebootPolicyContext
+        if ($policyContext.RebootPreference -eq "Suppress") {
+            Write-Host "Platform policy is set to suppress reboots"
+        }
+    
+    .OUTPUTS
+        PSCustomObject with the following properties:
+        - RebootPreference: Current reboot preference (Normal/Force/Suppress or $null if not set)
+        - PromptTimeoutAction: Action when prompt times out (Reboot/Suppress/FailSession or $null)
+        - AutoConsentToReboots: Whether to auto-consent to reboots ($true/$false or $null)
+        - PromptTimeout: TimeSpan for prompt timeout duration (or $null)
+        - IsRebootPreferenceAvailable: Boolean indicating if RebootPreference variable exists
+        - IsPromptTimeoutActionAvailable: Boolean indicating if PromptTimeoutAction variable exists
+        - IsAutoConsentToRebootsAvailable: Boolean indicating if AutoConsentToReboots variable exists
+        - IsPromptTimeoutAvailable: Boolean indicating if PromptTimeout variable exists
+        - PolicySource: String indicating source of policy detection
+    #>
+    
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param(
+        [Parameter(Mandatory = $false)]
+        $Computer = (Get-ImmyComputer)
+    )
 
+    $FunctionName = "Get-C9RebootPolicyContext"
+    
+    Write-Host "[$ScriptName - $FunctionName] Gathering platform reboot policy context..."
+
+    # Initialize result object with all possible properties
+    $result = [ordered]@{
+        RebootPreference                    = $null
+        PromptTimeoutAction                 = $null
+        AutoConsentToReboots               = $null
+        PromptTimeout                      = $null
+        IsRebootPreferenceAvailable        = $false
+        IsPromptTimeoutActionAvailable     = $false
+        IsAutoConsentToRebootsAvailable    = $false
+        IsPromptTimeoutAvailable           = $false
+        PolicySource                       = "None"
+    }
+
+    try {
+        # Check for RebootPreference variable
+        $rebootPrefVar = Get-Variable -Name 'rebootPreference' -ErrorAction SilentlyContinue
+        if ($null -ne $rebootPrefVar) {
+            $result.RebootPreference = $rebootPrefVar.Value
+            $result.IsRebootPreferenceAvailable = $true
+            $result.PolicySource = "Platform Variables"
+            Write-Host "[$ScriptName - $FunctionName] Found RebootPreference: '$($rebootPrefVar.Value)'"
+        } else {
+            Write-Host "[$ScriptName - $FunctionName] RebootPreference variable not found in current context"
+        }
+
+        # Check for PromptTimeoutAction variable
+        $promptTimeoutActionVar = Get-Variable -Name 'promptTimeoutAction' -ErrorAction SilentlyContinue
+        if ($null -ne $promptTimeoutActionVar) {
+            $result.PromptTimeoutAction = $promptTimeoutActionVar.Value
+            $result.IsPromptTimeoutActionAvailable = $true
+            Write-Host "[$ScriptName - $FunctionName] Found PromptTimeoutAction: '$($promptTimeoutActionVar.Value)'"
+        } else {
+            Write-Host "[$ScriptName - $FunctionName] PromptTimeoutAction variable not found in current context"
+        }
+
+        # Check for AutoConsentToReboots variable
+        $autoConsentVar = Get-Variable -Name 'autoConsentToReboots' -ErrorAction SilentlyContinue
+        if ($null -ne $autoConsentVar) {
+            $result.AutoConsentToReboots = $autoConsentVar.Value
+            $result.IsAutoConsentToRebootsAvailable = $true
+            Write-Host "[$ScriptName - $FunctionName] Found AutoConsentToReboots: '$($autoConsentVar.Value)'"
+        } else {
+            Write-Host "[$ScriptName - $FunctionName] AutoConsentToReboots variable not found in current context"
+        }
+
+        # Check for PromptTimeout variable
+        $promptTimeoutVar = Get-Variable -Name 'promptTimeout' -ErrorAction SilentlyContinue
+        if ($null -ne $promptTimeoutVar) {
+            $result.PromptTimeout = $promptTimeoutVar.Value
+            $result.IsPromptTimeoutAvailable = $true
+            Write-Host "[$ScriptName - $FunctionName] Found PromptTimeout: '$($promptTimeoutVar.Value)'"
+        } else {
+            Write-Host "[$ScriptName - $FunctionName] PromptTimeout variable not found in current context"
+        }
+
+        # Update PolicySource if any variables were found
+        $availableCount = @(
+            $result.IsRebootPreferenceAvailable,
+            $result.IsPromptTimeoutActionAvailable,
+            $result.IsAutoConsentToRebootsAvailable,
+            $result.IsPromptTimeoutAvailable
+        ) | Where-Object { $_ -eq $true } | Measure-Object | Select-Object -ExpandProperty Count
+
+        if ($availableCount -gt 0) {
+            Write-Host "[$ScriptName - $FunctionName] Found $availableCount platform reboot policy variable(s)"
+        } else {
+            Write-Host "[$ScriptName - $FunctionName] No platform reboot policy variables found in current context"
+        }
+
+    } catch {
+        Write-Error "[$ScriptName - $FunctionName] Error gathering platform reboot policy context: $($_.Exception.Message)"
+        $result.PolicySource = "Error"
+    }
+
+    Write-Host "[$ScriptName - $FunctionName] Platform reboot policy context gathering complete"
+    
+    return New-Object -TypeName PSObject -Property $result
+}
+
+function Get-C9UserActivityStatus {
+    <#
+    .SYNOPSIS
+        Gets comprehensive user activity information for an endpoint.
+    
+    .DESCRIPTION
+        This function orchestrates calls to existing user activity functions to provide
+        a complete picture of user activity status. It consolidates user login status,
+        idle time, lock status, and session information into a single structured object.
+        
+        This is a foundational "Get" function that provides clean data collection for 
+        downstream decision logic functions.
+    
+    .PARAMETER Computer
+        The ImmyBot computer object. Defaults to the computer in the current context via (Get-ImmyComputer).
+    
+    .EXAMPLE
+        $userActivity = Get-C9UserActivityStatus
+        if ($userActivity.IsUserLoggedIn -and $userActivity.IdleTimeMinutes -lt 30) {
+            Write-Host "User is active - not safe for maintenance"
+        }
+    
+    .OUTPUTS
+        PSCustomObject with the following properties:
+        - IsUserLoggedIn: Boolean indicating if any user is in an active session
+        - IdleTimeMinutes: Number of minutes the user has been idle (or -1 if no user)
+        - IdleTimeSpan: Raw TimeSpan object from Get-C9UserIdleTime
+        - LockStatus: Current lock status (Locked/Unlocked/LoggedOut/Unknown)
+        - LoggedOnUsers: Array of logged on usernames (from Get-LoggedOnUser)
+        - LoggedOnUsersCount: Count of logged on users
+        - SessionInfo: Summary string describing the current session state
+        - DataSource: Source of the activity detection
+    #>
+    
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param(
+        [Parameter(Mandatory = $false)]
+        $Computer = (Get-ImmyComputer)
+    )
+
+    $FunctionName = "Get-C9UserActivityStatus"
+    
+    Write-Host "[$ScriptName - $FunctionName] Gathering comprehensive user activity status..."
+
+    # Initialize result object
+    $result = [ordered]@{
+        IsUserLoggedIn      = $false
+        IdleTimeMinutes     = -1
+        IdleTimeSpan        = $null
+        LockStatus          = "Unknown"
+        LoggedOnUsers       = @()
+        LoggedOnUsersCount  = 0
+        SessionInfo         = "Unknown"
+        DataSource          = "Multiple Sources"
+    }
+
+    try {
+        # Step 1: Check if user is logged in (using existing function)
+        Write-Host "[$ScriptName - $FunctionName] Checking user login status..."
+        $result.IsUserLoggedIn = Test-C9IsUserLoggedIn -Computer $Computer
+        
+        # Step 2: Get idle time (using existing function)
+        Write-Host "[$ScriptName - $FunctionName] Getting user idle time..."
+        $idleTimeSpan = Get-C9UserIdleTime -Computer $Computer
+        $result.IdleTimeSpan = $idleTimeSpan
+        
+        if ($idleTimeSpan -eq [TimeSpan]::MaxValue) {
+            $result.IdleTimeMinutes = -1
+            $result.SessionInfo = "No user logged on"
+        } else {
+            $result.IdleTimeMinutes = [int]$idleTimeSpan.TotalMinutes
+        }
+
+        # Step 3: Get lock status (using existing ImmyBot function)
+        Write-Host "[$ScriptName - $FunctionName] Checking lock status..."
+        try {
+            $result.LockStatus = Get-ComputerLockedStatus -Computer $Computer -ErrorAction Stop
+        } catch {
+            Write-Warning "[$ScriptName - $FunctionName] Could not determine lock status: $_"
+            $result.LockStatus = "Error"
+        }
+
+        # Step 4: Get logged on users (using existing ImmyBot function for completeness)
+        Write-Host "[$ScriptName - $FunctionName] Getting logged on users list..."
+        try {
+            $loggedOnUsers = @(Get-LoggedOnUser -Computer $Computer -ErrorAction SilentlyContinue)
+            if ($null -ne $loggedOnUsers -and $loggedOnUsers.Count -gt 0) {
+                $result.LoggedOnUsers = $loggedOnUsers
+                $result.LoggedOnUsersCount = $loggedOnUsers.Count
+            } else {
+                $result.LoggedOnUsers = @()
+                $result.LoggedOnUsersCount = 0
+            }
+        } catch {
+            Write-Warning "[$ScriptName - $FunctionName] Could not get logged on users: $_"
+            $result.LoggedOnUsers = @()
+            $result.LoggedOnUsersCount = 0
+        }
+
+        # Step 5: Build session info summary
+        if (-not $result.IsUserLoggedIn) {
+            $result.SessionInfo = "No active user sessions"
+        } elseif ($result.LockStatus -eq "Locked") {
+            $result.SessionInfo = "User logged in but screen is locked (idle: $($result.IdleTimeMinutes) min)"
+        } elseif ($result.IdleTimeMinutes -ge 0) {
+            $result.SessionInfo = "User active session (idle: $($result.IdleTimeMinutes) min, lock: $($result.LockStatus))"
+        } else {
+            $result.SessionInfo = "User session detected but idle time unknown"
+        }
+
+        Write-Host "[$ScriptName - $FunctionName] User activity summary: $($result.SessionInfo)"
+
+    } catch {
+        Write-Error "[$ScriptName - $FunctionName] Error gathering user activity status: $($_.Exception.Message)"
+        $result.SessionInfo = "Error occurred during status check"
+        $result.DataSource = "Error"
+    }
+
+    Write-Host "[$ScriptName - $FunctionName] User activity status gathering complete"
+    
+    return New-Object -TypeName PSObject -Property $result
+}
+
+function Get-C9SystemRebootRequirements {
+    <#
+    .SYNOPSIS
+        Gets comprehensive system reboot requirement information for an endpoint.
+    
+    .DESCRIPTION
+        This function orchestrates calls to the native Test-PendingReboot function to provide
+        a complete picture of system reboot requirements. It categorizes different types of
+        pending reboots and provides structured data for downstream decision logic functions.
+        
+        This is a foundational "Get" function that provides clean data collection for 
+        downstream decision logic functions.
+    
+    .PARAMETER Computer
+        The ImmyBot computer object. Defaults to the computer in the current context via (Get-ImmyComputer).
+    
+    .EXAMPLE
+        $rebootRequirements = Get-C9SystemRebootRequirements
+        if ($rebootRequirements.IsRebootPending -and $rebootRequirements.HasCriticalRebootSources) {
+            Write-Host "Critical reboot required - cannot proceed with software changes"
+        }
+    
+    .OUTPUTS
+        PSCustomObject with the following properties:
+        - IsRebootPending: Boolean indicating if any reboot is pending
+        - HasCriticalRebootSources: Boolean indicating if critical OS-level reboots are pending
+        - RebootSources: Array of strings describing what is causing reboot requirements
+        - CriticalSources: Array of critical reboot sources that should not be ignored
+        - NonCriticalSources: Array of non-critical reboot sources
+        - WindowsUpdateRelated: Boolean indicating if Windows Update is involved
+        - ComponentBasedServicing: Boolean from native Test-PendingReboot
+        - PendingComputerRenameDomainJoin: Boolean from native Test-PendingReboot
+        - PendingFileRenameOperations: Boolean from native Test-PendingReboot
+        - SystemCenterConfigManager: Boolean from native Test-PendingReboot
+        - WindowsUpdateAutoUpdate: Boolean from native Test-PendingReboot
+        - PendingRebootStartTime: DateTime from native Test-PendingReboot
+        - RawPendingRebootData: Full detailed output from Test-PendingReboot
+        - DataSource: Source of the reboot detection
+    #>
+    
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param(
+        [Parameter(Mandatory = $false)]
+        $Computer = (Get-ImmyComputer)
+    )
+
+    $FunctionName = "Get-C9SystemRebootRequirements"
+    
+    Write-Host "[$ScriptName - $FunctionName] Gathering comprehensive system reboot requirements..."
+
+    # Initialize result object
+    $result = [ordered]@{
+        IsRebootPending                 = $false
+        HasCriticalRebootSources        = $false
+        RebootSources                   = @()
+        CriticalSources                 = @()
+        NonCriticalSources              = @()
+        WindowsUpdateRelated            = $false
+        ComponentBasedServicing         = $false
+        PendingComputerRenameDomainJoin = $false
+        PendingFileRenameOperations     = $false
+        SystemCenterConfigManager       = $false
+        WindowsUpdateAutoUpdate         = $false
+        PendingRebootStartTime          = $null
+        RawPendingRebootData            = $null
+        DataSource                      = "Native Test-PendingReboot"
+    }
+
+    try {
+        # Step 1: Get detailed pending reboot information using native function
+        Write-Host "[$ScriptName - $FunctionName] Checking for pending reboot conditions..."
+        
+        $pendingRebootData = Test-PendingReboot -Computer $Computer -Passthru
+        $result.RawPendingRebootData = $pendingRebootData
+        
+        if ($null -eq $pendingRebootData) {
+            Write-Warning "[$ScriptName - $FunctionName] Test-PendingReboot returned null data"
+            $result.DataSource = "Error - No Data"
+            return New-Object -TypeName PSObject -Property $result
+        }
+
+        # Step 2: Extract core data
+        $result.IsRebootPending = $pendingRebootData.IsRebootPending
+        $result.ComponentBasedServicing = $pendingRebootData.ComponentBasedServicing
+        $result.PendingComputerRenameDomainJoin = $pendingRebootData.PendingComputerRenameDomainJoin
+        $result.PendingFileRenameOperations = $pendingRebootData.PendingFileRenameOperations
+        $result.SystemCenterConfigManager = $pendingRebootData.SystemCenterConfigManager
+        $result.WindowsUpdateAutoUpdate = $pendingRebootData.WindowsUpdateAutoUpdate
+        $result.PendingRebootStartTime = $pendingRebootData.PendingRebootStartTime
+
+        Write-Host "[$ScriptName - $FunctionName] Overall reboot pending status: $($result.IsRebootPending)"
+
+        # Step 3: Categorize reboot sources
+        if ($result.IsRebootPending) {
+            Write-Host "[$ScriptName - $FunctionName] Analyzing reboot sources..."
+
+            # Critical sources that typically indicate OS-level changes that should not be ignored
+            if ($result.ComponentBasedServicing) {
+                $result.CriticalSources += "Component Based Servicing"
+                $result.RebootSources += "Component Based Servicing (OS components changed)"
+            }
+
+            if ($result.PendingComputerRenameDomainJoin) {
+                $result.CriticalSources += "Computer Rename/Domain Join"
+                $result.RebootSources += "Computer Rename or Domain Join operation"
+            }
+
+            if ($result.WindowsUpdateAutoUpdate) {
+                $result.CriticalSources += "Windows Update Auto Update"
+                $result.RebootSources += "Windows Update Auto Update"
+                $result.WindowsUpdateRelated = $true
+            }
+
+            # Non-critical sources that might be acceptable to work around
+            if ($result.PendingFileRenameOperations) {
+                $result.NonCriticalSources += "Pending File Rename Operations"
+                $result.RebootSources += "Pending File Rename Operations"
+            }
+
+            if ($result.SystemCenterConfigManager) {
+                $result.NonCriticalSources += "System Center Configuration Manager"
+                $result.RebootSources += "System Center Configuration Manager"
+            }
+
+            # Check for Windows Update Orchestrator reboot time
+            if ($null -ne $result.PendingRebootStartTime -and -not [string]::IsNullOrWhiteSpace($result.PendingRebootStartTime)) {
+                try {
+                $rebootTime = [DateTime]$result.PendingRebootStartTime
+                    if ($rebootTime -gt (Get-Date).ToUniversalTime()) {
+                        $result.CriticalSources += "Windows Update Orchestrator"
+                        $result.RebootSources += "Windows Update Orchestrator (scheduled reboot)"
+                        $result.WindowsUpdateRelated = $true
+                    }
+                } catch {
+                    Write-Warning "[$ScriptName - $FunctionName] Could not parse PendingRebootStartTime: $($result.PendingRebootStartTime)"
+                }
+            }
+
+            # Determine if critical sources exist
+            $result.HasCriticalRebootSources = $result.CriticalSources.Count -gt 0
+
+            Write-Host "[$ScriptName - $FunctionName] Found $($result.RebootSources.Count) reboot source(s): $($result.RebootSources -join ', ')"
+            Write-Host "[$ScriptName - $FunctionName] Critical sources: $($result.CriticalSources.Count), Non-critical sources: $($result.NonCriticalSources.Count)"
+            Write-Host "[$ScriptName - $FunctionName] Windows Update related: $($result.WindowsUpdateRelated)"
+
+        } else {
+            Write-Host "[$ScriptName - $FunctionName] No pending reboot detected"
+        }
+
+    } catch {
+        Write-Error "[$ScriptName - $FunctionName] Error gathering system reboot requirements: $($_.Exception.Message)"
+        $result.DataSource = "Error"
+        $result.RebootSources = @("Error occurred during detection")
+    }
+
+    Write-Host "[$ScriptName - $FunctionName] System reboot requirements gathering complete"
+    
+    return New-Object -TypeName PSObject -Property $result
+}
+
+function Test-C9RebootDecision {
+    <#
+    .SYNOPSIS
+        Orchestrates comprehensive reboot decision logic for software package operations.
+    
+    .DESCRIPTION
+        This function implements decision logic for three key reboot scenarios by orchestrating
+        calls to all foundational Get functions. It respects platform policies while applying
+        software-specific overrides for critical operations that cannot be left in pending states.
+        
+        This is the primary "Test" function that provides decision logic for downstream
+        action functions.
+    
+    .PARAMETER Scenario
+        The reboot scenario being evaluated:
+        - PreAction: Check before making changes that may require reboot
+        - PostAction: Decide whether to reboot after changes requiring reboot  
+        - ClearPending: Decide whether to clear existing pending reboot before proceeding
+    
+    .PARAMETER MaxUserIdleMinutes
+        Maximum minutes a user can be idle before considering the endpoint safe for reboot.
+        Defaults to 120 minutes (2 hours).
+    
+    .PARAMETER PromptTimeoutMinutes
+        Minutes to wait for user response when prompting about reboot.
+        Defaults to 5 minutes.
+    
+    .PARAMETER AllowUserCancel
+        Whether to allow user to cancel the reboot operation.
+        - $true: User can cancel (for PreAction/ClearPending scenarios)
+        - $false: User gets notification but cannot cancel (for PostAction scenario)
+        Defaults to $true.
+    
+    .PARAMETER OverrideSuppression
+        Whether to override platform 'Suppress' policy for critical operations.
+        Use this for operations that cannot be left in pending states.
+        Defaults to $false.
+    
+    .PARAMETER WhatIf
+        If specified, runs all decision logic but does not perform any actual reboots.
+        Shows what actions would be taken for testing and troubleshooting purposes.
+        Defaults to $false.
+    
+    .PARAMETER Computer
+        The ImmyBot computer object. Defaults to the computer in the current context via (Get-ImmyComputer).
+    
+    .EXAMPLE
+        # Pre-action check before S1 installation
+        $decision = Test-C9RebootDecision -Scenario PreAction -OverrideSuppression $true
+        if (-not $decision.ShouldProceed) {
+            throw "Cannot proceed with installation: $($decision.Reason)"
+        }
+    
+    .EXAMPLE
+        # Post-action check after S1 installation requiring reboot
+        $decision = Test-C9RebootDecision -Scenario PostAction -AllowUserCancel $false
+        if ($decision.ShouldReboot) {
+            Write-Host "Proceeding with required reboot: $($decision.Reason)"
+        }
+    
+    .EXAMPLE
+        # Test what would happen without actually rebooting
+        $decision = Test-C9RebootDecision -Scenario PostAction -WhatIf
+        Write-Host "Would reboot: $($decision.ShouldReboot), Reason: $($decision.Reason)"
+    
+    .OUTPUTS
+        PSCustomObject with the following properties:
+        - ShouldProceed: Boolean indicating whether the operation should proceed
+        - ShouldReboot: Boolean indicating whether a reboot should be performed
+        - ShouldPromptUser: Boolean indicating whether user interaction is recommended
+        - UserInteractionMode: String describing the type of user interaction (None/Prompt/Notify)
+        - Reason: String explaining the decision
+        - PlatformPolicy: Current platform reboot preference
+        - UserActivitySummary: Summary of current user activity
+        - RebootRequirementsSummary: Summary of pending reboot requirements
+        - OverrideApplied: Boolean indicating if platform policy was overridden
+        - RecommendedAction: String describing the recommended next action
+        - WhatIfMode: Boolean indicating if this was a test run
+        - RawData: Object containing all raw data from Get functions
+    #>
+    
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('PreAction', 'PostAction', 'ClearPending')]
+        [string]$Scenario,
+        
+        [Parameter(Mandatory = $false)]
+        [int]$MaxUserIdleMinutes = 120,
+        
+        [Parameter(Mandatory = $false)]
+        [int]$PromptTimeoutMinutes = 5,
+        
+        [Parameter(Mandatory = $false)]
+        [bool]$AllowUserCancel = $true,
+        
+        [Parameter(Mandatory = $false)]
+        [bool]$OverrideSuppression = $false,
+        
+        [Parameter(Mandatory = $false)]
+        [switch]$WhatIf,
+        
+        [Parameter(Mandatory = $false)]
+        $Computer = (Get-ImmyComputer)
+    )
+
+    $FunctionName = "Test-C9RebootDecision"
+    
+    Write-Host "[$ScriptName - $FunctionName] Starting reboot decision analysis for scenario: $Scenario$(if ($WhatIf) { ' (WhatIf Mode)' })"
+
+    # Initialize result object
+    $result = [ordered]@{
+        ShouldProceed               = $false
+        ShouldReboot               = $false
+        ShouldPromptUser           = $false
+        UserInteractionMode        = "None"
+        Reason                     = "Initial state"
+        PlatformPolicy             = "Unknown"
+        UserActivitySummary        = "Unknown"
+        RebootRequirementsSummary  = "Unknown"
+        OverrideApplied           = $false
+        RecommendedAction         = "None"
+        WhatIfMode                = $WhatIf.IsPresent
+        RawData                   = @{}
+    }
+
+    try {
+        # Step 1: Gather all foundational data
+        Write-Host "[$ScriptName - $FunctionName] Gathering platform policy context..."
+        $policyContext = Get-C9RebootPolicyContext -Computer $Computer
+        
+        Write-Host "[$ScriptName - $FunctionName] Gathering user activity status..."
+        $userActivity = Get-C9UserActivityStatus -Computer $Computer
+        
+        Write-Host "[$ScriptName - $FunctionName] Gathering system reboot requirements..."
+        $rebootRequirements = Get-C9SystemRebootRequirements -Computer $Computer
+
+        # Store raw data for advanced use cases
+        $result.RawData = @{
+            PolicyContext      = $policyContext
+            UserActivity       = $userActivity
+            RebootRequirements = $rebootRequirements
+        }
+
+        # Extract key information for decision logic
+        $result.PlatformPolicy = $policyContext.RebootPreference
+        $result.UserActivitySummary = $userActivity.SessionInfo
+        $result.RebootRequirementsSummary = if ($rebootRequirements.IsRebootPending) {
+            "Pending: $($rebootRequirements.RebootSources -join ', ')"
+        } else {
+            "No pending reboot detected"
+        }
+
+        Write-Host "[$ScriptName - $FunctionName] Platform Policy: $($result.PlatformPolicy)"
+        Write-Host "[$ScriptName - $FunctionName] User Activity: $($result.UserActivitySummary)"
+        Write-Host "[$ScriptName - $FunctionName] Reboot Requirements: $($result.RebootRequirementsSummary)"
+
+        # Step 2: Apply scenario-specific decision logic
+        switch ($Scenario) {
+            'PreAction' {
+                $result = Invoke-PreActionDecisionLogic -Result $result -PolicyContext $policyContext -UserActivity $userActivity -RebootRequirements $rebootRequirements -MaxUserIdleMinutes $MaxUserIdleMinutes -OverrideSuppression $OverrideSuppression -AllowUserCancel $AllowUserCancel -PromptTimeoutMinutes $PromptTimeoutMinutes -WhatIf $WhatIf.IsPresent -Computer $Computer
+            }
+            'PostAction' {
+                $result = Invoke-PostActionDecisionLogic -Result $result -PolicyContext $policyContext -UserActivity $userActivity -RebootRequirements $rebootRequirements -MaxUserIdleMinutes $MaxUserIdleMinutes -AllowUserCancel $AllowUserCancel -PromptTimeoutMinutes $PromptTimeoutMinutes -WhatIf $WhatIf.IsPresent -Computer $Computer
+            }
+            'ClearPending' {
+                $result = Invoke-ClearPendingDecisionLogic -Result $result -PolicyContext $policyContext -UserActivity $userActivity -RebootRequirements $rebootRequirements -MaxUserIdleMinutes $MaxUserIdleMinutes -OverrideSuppression $OverrideSuppression -AllowUserCancel $AllowUserCancel -PromptTimeoutMinutes $PromptTimeoutMinutes -WhatIf $WhatIf.IsPresent -Computer $Computer
+            }
+        }
+
+    } catch {
+        Write-Error "[$ScriptName - $FunctionName] Error during reboot decision analysis: $($_.Exception.Message)"
+        $result.Reason = "Error occurred during decision analysis: $($_.Exception.Message)"
+        $result.RecommendedAction = "Review error and retry"
+    }
+
+    Write-Host "[$ScriptName - $FunctionName] Decision complete. Should proceed: $($result.ShouldProceed), Should reboot: $($result.ShouldReboot)"
+    Write-Host "[$ScriptName - $FunctionName] Reason: $($result.Reason)"
+    
+    return New-Object -TypeName PSObject -Property $result
+}
+
+function Invoke-PreActionDecisionLogic {
+    <#
+    .SYNOPSIS
+        Implements decision logic for PreAction scenario (before making changes that may require reboot).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Result,
+        
+        [Parameter(Mandatory = $true)]
+        $PolicyContext,
+        
+        [Parameter(Mandatory = $true)]
+        $UserActivity,
+        
+        [Parameter(Mandatory = $true)]
+        $RebootRequirements,
+        
+        [Parameter(Mandatory = $true)]
+        [int]$MaxUserIdleMinutes,
+        
+        [Parameter(Mandatory = $true)]
+        [bool]$OverrideSuppression,
+        
+        [Parameter(Mandatory = $true)]
+        [bool]$AllowUserCancel,
+        
+        [Parameter(Mandatory = $true)]
+        [int]$PromptTimeoutMinutes,
+        
+        [Parameter(Mandatory = $true)]
+        [bool]$WhatIf,
+        
+        [Parameter(Mandatory = $true)]
+        $Computer
+    )
+
+    $FunctionName = "Invoke-PreActionDecisionLogic"
+    Write-Host "[$ScriptName - $FunctionName] Evaluating PreAction scenario..."
+
+    # Step 1: Check if existing pending reboot should block the operation
+    if ($RebootRequirements.IsRebootPending -and $RebootRequirements.HasCriticalRebootSources) {
+        Write-Host "[$ScriptName - $FunctionName] Critical pending reboot detected: $($RebootRequirements.CriticalSources -join ', ')"
+        
+        # Check platform policy vs override
+        if ($PolicyContext.RebootPreference -eq "Suppress" -and -not $OverrideSuppression) {
+            $Result.ShouldProceed = $false
+            $Result.Reason = "Critical pending reboot exists and platform policy suppresses reboots. Cannot proceed safely."
+            $Result.RecommendedAction = "Clear pending reboot manually or enable override suppression"
+            return $Result
+        }
+        
+        # Check user activity for reboot feasibility
+        $userActivityCheck = Test-UserActivityForReboot -UserActivity $UserActivity -MaxUserIdleMinutes $MaxUserIdleMinutes
+        
+        if (-not $userActivityCheck.IsSafe) {
+            $Result.ShouldProceed = $false
+            $Result.ShouldPromptUser = $userActivityCheck.ShouldPrompt
+            $Result.UserInteractionMode = if ($userActivityCheck.ShouldPrompt) { "Prompt" } else { "None" }
+            $Result.Reason = "Critical pending reboot exists but user activity prevents safe reboot: $($userActivityCheck.Reason)"
+            $Result.RecommendedAction = "Wait for user to become inactive or clear pending reboot manually"
+            return $Result
+        }
+        
+        # User activity allows reboot - should we clear it before proceeding?
+        $Result.ShouldProceed = $true
+        $Result.ShouldReboot = $true
+        $Result.ShouldPromptUser = $AllowUserCancel
+        $Result.UserInteractionMode = if ($AllowUserCancel) { "Prompt" } else { "Notify" }
+        $Result.Reason = "Critical pending reboot will be cleared before proceeding with software changes."
+        $Result.RecommendedAction = if ($WhatIf) { "Would clear pending reboot, then proceed" } else { "Clear pending reboot, then proceed" }
+        
+        if ($OverrideSuppression -and $PolicyContext.RebootPreference -eq "Suppress") {
+            $Result.OverrideApplied = $true
+        }
+        
+        return $Result
+    }
+    
+    # Step 2: No critical pending reboot - check if we should proceed
+    if ($PolicyContext.RebootPreference -eq "Suppress" -and -not $OverrideSuppression) {
+        $Result.ShouldProceed = $false
+        $Result.Reason = "Platform policy suppresses reboots and no override specified. Cannot guarantee successful operation."
+        $Result.RecommendedAction = "Enable override suppression for critical software operations"
+        return $Result
+    }
+    
+    # Step 3: Safe to proceed
+    $Result.ShouldProceed = $true
+    $Result.Reason = "No critical blocking conditions detected. Safe to proceed with software changes."
+    $Result.RecommendedAction = "Proceed with planned software operation"
+    
+    if ($OverrideSuppression -and $PolicyContext.RebootPreference -eq "Suppress") {
+        $Result.OverrideApplied = $true
+    }
+    
+    Write-Host "[$ScriptName - $FunctionName] PreAction evaluation complete: Should proceed = $($Result.ShouldProceed)"
+    return $Result
+}
+
+function Invoke-PostActionDecisionLogic {
+    <#
+    .SYNOPSIS
+        Implements decision logic for PostAction scenario (after changes requiring reboot).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Result,
+        
+        [Parameter(Mandatory = $true)]
+        $PolicyContext,
+        
+        [Parameter(Mandatory = $true)]
+        $UserActivity,
+        
+        [Parameter(Mandatory = $true)]
+        $RebootRequirements,
+        
+        [Parameter(Mandatory = $true)]
+        [int]$MaxUserIdleMinutes,
+        
+        [Parameter(Mandatory = $true)]
+        [bool]$AllowUserCancel,
+        
+        [Parameter(Mandatory = $true)]
+        [int]$PromptTimeoutMinutes,
+        
+        [Parameter(Mandatory = $true)]
+        [bool]$WhatIf,
+        
+        [Parameter(Mandatory = $true)]
+        $Computer
+    )
+
+    $FunctionName = "Invoke-PostActionDecisionLogic"
+    Write-Host "[$ScriptName - $FunctionName] Evaluating PostAction scenario..."
+
+    # PostAction scenario: Changes have been made that require reboot
+    # Software is in an incomplete state - reboot is mandatory for proper function
+    
+    # Step 1: Check user activity
+    $userActivityCheck = Test-UserActivityForReboot -UserActivity $UserActivity -MaxUserIdleMinutes $MaxUserIdleMinutes
+    
+    if (-not $userActivityCheck.IsSafe) {
+        # User is active - we must still reboot but should give notification
+        $Result.ShouldProceed = $true  # Changes already made, must complete
+        $Result.ShouldReboot = $true   # Reboot is mandatory
+        $Result.ShouldPromptUser = $true
+        $Result.UserInteractionMode = "Notify"  # User cannot cancel post-action reboot
+        $Result.Reason = "Software changes require immediate reboot to complete. User is active but will be notified."
+        $Result.RecommendedAction = if ($WhatIf) { "Would notify user and reboot" } else { "Notify user and proceed with reboot" }
+    } else {
+        # User is not active - safe to reboot immediately
+        $Result.ShouldProceed = $true
+        $Result.ShouldReboot = $true
+        $Result.ShouldPromptUser = $false
+        $Result.UserInteractionMode = "None"
+        $Result.Reason = "Software changes require reboot and user is not active. Safe to reboot immediately."
+        $Result.RecommendedAction = if ($WhatIf) { "Would reboot immediately" } else { "Reboot immediately" }
+    }
+
+    # PostAction scenario always proceeds regardless of platform policy
+    # because software is already in incomplete state
+    if ($PolicyContext.RebootPreference -eq "Suppress") {
+        $Result.OverrideApplied = $true
+        Write-Host "[$ScriptName - $FunctionName] Overriding 'Suppress' policy - software changes mandate reboot completion"
+    }
+    
+    Write-Host "[$ScriptName - $FunctionName] PostAction evaluation complete: Mandatory reboot required"
+    return $Result
+}
+
+function Invoke-ClearPendingDecisionLogic {
+    <#
+    .SYNOPSIS
+        Implements decision logic for ClearPending scenario (clear existing pending reboot before proceeding).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Result,
+        
+        [Parameter(Mandatory = $true)]
+        $PolicyContext,
+        
+        [Parameter(Mandatory = $true)]
+        $UserActivity,
+        
+        [Parameter(Mandatory = $true)]
+        $RebootRequirements,
+        
+        [Parameter(Mandatory = $true)]
+        [int]$MaxUserIdleMinutes,
+        
+        [Parameter(Mandatory = $true)]
+        [bool]$OverrideSuppression,
+        
+        [Parameter(Mandatory = $true)]
+        [bool]$AllowUserCancel,
+        
+        [Parameter(Mandatory = $true)]
+        [int]$PromptTimeoutMinutes,
+        
+        [Parameter(Mandatory = $true)]
+        [bool]$WhatIf,
+        
+        [Parameter(Mandatory = $true)]
+        $Computer
+    )
+
+    $FunctionName = "Invoke-ClearPendingDecisionLogic"
+    Write-Host "[$ScriptName - $FunctionName] Evaluating ClearPending scenario..."
+
+    # Step 1: Check if there's actually a pending reboot to clear
+    if (-not $RebootRequirements.IsRebootPending) {
+        $Result.ShouldProceed = $true
+        $Result.Reason = "No pending reboot detected. No action needed."
+        $Result.RecommendedAction = "Continue with planned operations"
+        return $Result
+    }
+    
+    Write-Host "[$ScriptName - $FunctionName] Pending reboot detected: $($RebootRequirements.RebootSources -join ', ')"
+    
+    # Step 2: Check platform policy vs override
+    if ($PolicyContext.RebootPreference -eq "Suppress" -and -not $OverrideSuppression) {
+        $Result.ShouldProceed = $false
+        $Result.Reason = "Pending reboot exists but platform policy suppresses reboots. Cannot clear."
+        $Result.RecommendedAction = "Enable override suppression or manually clear pending reboot"
+        return $Result
+    }
+    
+    # Step 3: Check user activity for reboot feasibility
+    $userActivityCheck = Test-UserActivityForReboot -UserActivity $UserActivity -MaxUserIdleMinutes $MaxUserIdleMinutes
+    
+    if (-not $userActivityCheck.IsSafe) {
+        $Result.ShouldProceed = $false
+        $Result.ShouldPromptUser = $userActivityCheck.ShouldPrompt
+        $Result.UserInteractionMode = if ($userActivityCheck.ShouldPrompt) { "Prompt" } else { "None" }
+        $Result.Reason = "Pending reboot exists but user activity prevents safe reboot: $($userActivityCheck.Reason)"
+        $Result.RecommendedAction = "Wait for user to become inactive or schedule reboot"
+        return $Result
+    }
+    
+    # Step 4: Safe to clear pending reboot
+    $Result.ShouldProceed = $true
+    $Result.ShouldReboot = $true
+    $Result.ShouldPromptUser = $AllowUserCancel
+    $Result.UserInteractionMode = if ($AllowUserCancel) { "Prompt" } else { "Notify" }
+    $Result.Reason = "Pending reboot will be cleared. $($userActivityCheck.Reason)"
+    $Result.RecommendedAction = if ($WhatIf) { "Would clear pending reboot" } else { "Clear pending reboot" }
+    
+    if ($OverrideSuppression -and $PolicyContext.RebootPreference -eq "Suppress") {
+        $Result.OverrideApplied = $true
+    }
+    
+    Write-Host "[$ScriptName - $FunctionName] ClearPending evaluation complete: Should clear = $($Result.ShouldReboot)"
+    return $Result
+}
+
+function Test-UserActivityForReboot {
+    <#
+    .SYNOPSIS
+        Evaluates user activity to determine if a reboot is safe.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $UserActivity,
+        
+        [Parameter(Mandatory = $true)]
+        [int]$MaxUserIdleMinutes
+    )
+
+    $result = @{
+        IsSafe = $false
+        ShouldPrompt = $false
+        Reason = "Unknown"
+    }
+
+    # No user logged in - always safe
+    if (-not $UserActivity.IsUserLoggedIn) {
+        $result.IsSafe = $true
+        $result.Reason = "No user is logged in - safe to reboot"
+        return $result
+    }
+    
+    # User is logged in but screen is locked - generally safe
+    if ($UserActivity.LockStatus -eq "Locked") {
+        $result.IsSafe = $true
+        $result.Reason = "User is logged in but screen is locked - safe to reboot"
+        return $result
+    }
+    
+    # User is logged in and screen is unlocked - check idle time
+    if ($UserActivity.IdleTimeMinutes -ge $MaxUserIdleMinutes) {
+        $result.IsSafe = $true
+        $result.Reason = "User has been idle for $($UserActivity.IdleTimeMinutes) minutes (threshold: $MaxUserIdleMinutes) - safe to reboot"
+        return $result
+    }
+    
+    # User is active - not safe but should prompt if idle time is reasonable
+    if ($UserActivity.IdleTimeMinutes -ge 30) {  # At least 30 minutes idle
+        $result.IsSafe = $false
+        $result.ShouldPrompt = $true
+        $result.Reason = "User is active (idle: $($UserActivity.IdleTimeMinutes) min) but may accept reboot prompt"
+        return $result
+    }
+    
+    # User is very active - not safe and shouldn't prompt
+    $result.IsSafe = $false
+    $result.ShouldPrompt = $false
+    $result.Reason = "User is very active (idle: $($UserActivity.IdleTimeMinutes) min) - not safe to reboot"
+    return $result
+}
 
 Export-ModuleMember -Function @(
     'Invoke-C9EndpointCommand',
@@ -673,5 +1582,13 @@ Export-ModuleMember -Function @(
     'Test-C9SystemPrerequisites',
     'Test-C9EndpointSafeToReboot',
     'Test-AndClearPendingReboot',
-    'Get-C9UserIdleTime'
+    'Get-C9UserIdleTime',
+    'Get-C9RebootPolicyContext',
+    'Get-C9UserActivityStatus',
+    'Test-C9RebootDecision',
+    'Invoke-PreActionDecisionLogic',
+    'Invoke-PostActionDecisionLogic',
+    'Invoke-ClearPendingDecisionLogic',
+    'Test-UserActivityForReboot',
+    'Get-C9SystemRebootRequirements'
 )
