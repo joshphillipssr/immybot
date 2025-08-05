@@ -4,13 +4,17 @@
 # Contact:  josh@c9cg.com
 # Docs:     https://immydocs.c9cg.com
 # =================================================================================
-$VerbosePreference = 'Continue'
-$ProgressPreference = 'SilentlyContinue'
+
 
 # --- Preamble and Parameter Declaration ---
 param(
-    [string]$RebootPreference
+    [string]$rebootPreference
 )
+
+# $VerbosePreference = 'Continue'
+# $ProgressPreference = 'SilentlyContinue'
+
+Write-Host -ForegroundColor Cyan "[$ScriptName] Current system reboot policy is: '$rebootPreference'"
 
 # State-tracking variable. It will be set to $true ONLY if we are overriding a 'Suppress' policy.
 $forceRebootOverride = $false
@@ -23,12 +27,11 @@ Import-Module "C9SentinelOneCloud"
 # --- Phase 1: Pre-Flight Gatekeeper ---
 Write-Host "[$ScriptName] Phase 1: Performing Pre-Flight State Assessment & Safety Gatekeeper..."
 $s1AgentState = Get-C9SentinelOneInfo
-$rebootWillBeRequired = ($null -ne $s1AgentState.Services)
+$rebootWillBeRequired = ($null -ne $s1AgentState.Service)
 
 if ($rebootWillBeRequired) {
     Write-Host "[$ScriptName] [CONDITION] Active S1 services exist. A post-uninstall reboot is mandatory."
 
-    Write-Host "[$ScriptName] Current system reboot policy is: '$RebootPreference'"
     if ($RebootPreference -eq 'Suppress') {
         Write-Host "[$ScriptName] [POLICY] Platform policy is 'Suppress'. Checking for override conditions..."
         if (Test-C9IsUserLoggedIn) {
@@ -55,11 +58,11 @@ try {
     Invoke-ImmyCommand {
         $triggerFilePath = Join-Path -Path $using:triggerFileDir -ChildPath $using:triggerFileName
         if (Test-Path $triggerFilePath) {
-            Write-Host "[$ScriptName] Found uninstall trigger file. Renaming it to break loop."
+            Write-Host "[$using:ScriptName] Found uninstall trigger file. Renaming it to break loop."
             try {
                 Rename-Item -Path $triggerFilePath -NewName $using:newFileName -ErrorAction Stop
             } catch {
-                Write-Warning "Could not rename trigger file."
+                Write-Warning "[$using:ScriptName] Could not rename trigger file."
             }
         }
     }
