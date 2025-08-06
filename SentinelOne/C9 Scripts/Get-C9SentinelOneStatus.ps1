@@ -77,3 +77,5 @@ function Get-C9SentinelOneStatus {
 
     return $statusObject
 }
+Get-C9SentinelOneStatus
+# Works

@@ -465,7 +465,7 @@ function Test-C9EndpointSafeToReboot {
         $idleTime = Get-C9UserIdleTime -Computer $Computer -ErrorAction Stop
         $computerLockStatus = Get-C9ComputerLockedStatus -Computer $Computer -ErrorAction Stop
         $result.IdleTimeMinutes = [int]$idleTime.TotalMinutes
-        $result.LockStatus = $computerLockStatus.LockStatus
+        $result.LockStatus = $lockStatus
         
         Write-Host "[$ScriptName - $FunctionName] Endpoint idle for $($result.IdleTimeMinutes) minute(s). Lock status: $($result.LockStatus)."
        
@@ -701,27 +701,11 @@ function Get-C9RebootPolicyContext {
         The ImmyBot computer object. Defaults to the computer in the current context via (Get-ImmyComputer).
         Included for consistency with other module functions, though policy variables are context-based.
     
-    .PARAMETER RebootPreference
-        Optional. Explicitly pass the RebootPreference value if auto-detection fails.
-    
-    .PARAMETER PromptTimeoutAction
-        Optional. Explicitly pass the PromptTimeoutAction value if auto-detection fails.
-    
-    .PARAMETER AutoConsentToReboots
-        Optional. Explicitly pass the AutoConsentToReboots value if auto-detection fails.
-    
-    .PARAMETER PromptTimeout
-        Optional. Explicitly pass the PromptTimeout value if auto-detection fails.
-    
     .EXAMPLE
         $policyContext = Get-C9RebootPolicyContext
         if ($policyContext.RebootPreference -eq "Suppress") {
             Write-Host "Platform policy is set to suppress reboots"
         }
-    
-    .EXAMPLE
-        # Explicitly pass variables if auto-detection fails
-        $policyContext = Get-C9RebootPolicyContext -RebootPreference $rebootPreference -PromptTimeoutAction $promptTimeoutAction
     
     .OUTPUTS
         PSCustomObject with the following properties:
@@ -740,23 +724,11 @@ function Get-C9RebootPolicyContext {
     [OutputType([PSCustomObject])]
     param(
         [Parameter(Mandatory = $false)]
-        $Computer = (Get-ImmyComputer),
-        
-        [Parameter(Mandatory = $false)]
-        [string]$RebootPreference,
-        
-        [Parameter(Mandatory = $false)]
-        [string]$PromptTimeoutAction,
-        
-        [Parameter(Mandatory = $false)]
-        [bool]$AutoConsentToReboots,
-        
-        [Parameter(Mandatory = $false)]
-        [timespan]$PromptTimeout
+        $Computer = (Get-ImmyComputer)
     )
 
     $FunctionName = "Get-C9RebootPolicyContext"
-    
+
     Write-Host "[$ScriptName - $FunctionName] Gathering platform reboot policy context..."
 
     # Initialize result object with all possible properties
@@ -773,97 +745,71 @@ function Get-C9RebootPolicyContext {
     }
 
     try {
-    # Check for RebootPreference variable
-    if (-not [string]::IsNullOrWhiteSpace($RebootPreference)) {
-        $result.RebootPreference = $RebootPreference
-        $result.IsRebootPreferenceAvailable = $true
-        $result.PolicySource = "Parameter"
-        Write-Host "[$ScriptName - $FunctionName] Using passed RebootPreference parameter: '$RebootPreference'"
-    } else {
-        $rebootPrefVar = Get-C9VariableFromAnyScope -VariableName 'rebootPreference' -IncludeCommonVariations
+        # Check for RebootPreference variable
+        $rebootPrefVar = Get-Variable -Name 'RebootPreference' -ErrorAction SilentlyContinue
         if ($null -ne $rebootPrefVar) {
             $result.RebootPreference = $rebootPrefVar.Value
             $result.IsRebootPreferenceAvailable = $true
             $result.PolicySource = "Platform Variables"
             Write-Host "[$ScriptName - $FunctionName] Found RebootPreference: '$($rebootPrefVar.Value)'"
         } else {
-            Write-Host "[$ScriptName - $FunctionName] RebootPreference variable not found in any accessible scope"
+            Write-Host "[$ScriptName - $FunctionName] RebootPreference variable not found in current context"
         }
-    }
 
-    # Check for PromptTimeoutAction variable
-    if (-not [string]::IsNullOrWhiteSpace($PromptTimeoutAction)) {
-        $result.PromptTimeoutAction = $PromptTimeoutAction
-        $result.IsPromptTimeoutActionAvailable = $true
-        Write-Host "[$ScriptName - $FunctionName] Using passed PromptTimeoutAction parameter: '$PromptTimeoutAction'"
-    } else {
-        $promptTimeoutActionVar = Get-C9VariableFromAnyScope -VariableName 'promptTimeoutAction' -IncludeCommonVariations
+        # Check for PromptTimeoutAction variable
+        $promptTimeoutActionVar = Get-Variable -Name 'promptTimeoutAction' -ErrorAction SilentlyContinue
         if ($null -ne $promptTimeoutActionVar) {
             $result.PromptTimeoutAction = $promptTimeoutActionVar.Value
             $result.IsPromptTimeoutActionAvailable = $true
             Write-Host "[$ScriptName - $FunctionName] Found PromptTimeoutAction: '$($promptTimeoutActionVar.Value)'"
         } else {
-            Write-Host "[$ScriptName - $FunctionName] PromptTimeoutAction variable not found in any accessible scope"
+            Write-Host "[$ScriptName - $FunctionName] PromptTimeoutAction variable not found in current context"
         }
-    }
 
-    # Check for AutoConsentToReboots variable
-    if ($PSBoundParameters.ContainsKey('AutoConsentToReboots')) {
-        $result.AutoConsentToReboots = $AutoConsentToReboots
-        $result.IsAutoConsentToRebootsAvailable = $true
-        Write-Host "[$ScriptName - $FunctionName] Using passed AutoConsentToReboots parameter: '$AutoConsentToReboots'"
-    } else {
-        $autoConsentVar = Get-C9VariableFromAnyScope -VariableName 'autoConsentToReboots' -IncludeCommonVariations
+        # Check for AutoConsentToReboots variable
+        $autoConsentVar = Get-Variable -Name 'autoConsentToReboots' -ErrorAction SilentlyContinue
         if ($null -ne $autoConsentVar) {
             $result.AutoConsentToReboots = $autoConsentVar.Value
             $result.IsAutoConsentToRebootsAvailable = $true
             Write-Host "[$ScriptName - $FunctionName] Found AutoConsentToReboots: '$($autoConsentVar.Value)'"
         } else {
-            Write-Host "[$ScriptName - $FunctionName] AutoConsentToReboots variable not found in any accessible scope"
+            Write-Host "[$ScriptName - $FunctionName] AutoConsentToReboots variable not found in current context"
         }
-    }
 
-    # Check for PromptTimeout variable
-    if ($PSBoundParameters.ContainsKey('PromptTimeout')) {
-        $result.PromptTimeout = $PromptTimeout
-        $result.IsPromptTimeoutAvailable = $true
-        Write-Host "[$ScriptName - $FunctionName] Using passed PromptTimeout parameter: '$PromptTimeout'"
-    } else {
-        $promptTimeoutVar = Get-C9VariableFromAnyScope -VariableName 'promptTimeout' -IncludeCommonVariations
+        # Check for PromptTimeout variable
+        $promptTimeoutVar = Get-Variable -Name 'promptTimeout' -ErrorAction SilentlyContinue
         if ($null -ne $promptTimeoutVar) {
             $result.PromptTimeout = $promptTimeoutVar.Value
             $result.IsPromptTimeoutAvailable = $true
             Write-Host "[$ScriptName - $FunctionName] Found PromptTimeout: '$($promptTimeoutVar.Value)'"
         } else {
-            Write-Host "[$ScriptName - $FunctionName] PromptTimeout variable not found in any accessible scope"
+            Write-Host "[$ScriptName - $FunctionName] PromptTimeout variable not found in current context"
         }
-    }
 
-    # Update PolicySource if any variables were found - ConstrainedLanguage safe version
-    $availableCount = 0
-    if ($result.IsRebootPreferenceAvailable) { $availableCount++ }
-    if ($result.IsPromptTimeoutActionAvailable) { $availableCount++ }
-    if ($result.IsAutoConsentToRebootsAvailable) { $availableCount++ }
-    if ($result.IsPromptTimeoutAvailable) { $availableCount++ }
+        # Update PolicySource if any variables were found
+        $availableCount = @(
+            $result.IsRebootPreferenceAvailable,
+            $result.IsPromptTimeoutActionAvailable,
+            $result.IsAutoConsentToRebootsAvailable,
+            $result.IsPromptTimeoutAvailable
+        ) | Where-Object { $_ -eq $true } | Measure-Object | Select-Object -ExpandProperty Count
 
-    if ($availableCount -gt 0) {
-        Write-Host "[$ScriptName - $FunctionName] Found $availableCount platform reboot policy variable(s)"
-        if ($result.PolicySource -eq "None") {
-            $result.PolicySource = "Platform Variables"
+        if ($availableCount -gt 0) {
+            Write-Host "[$ScriptName - $FunctionName] Found $availableCount platform reboot policy variable(s)"
+        } else {
+            Write-Host "[$ScriptName - $FunctionName] No platform reboot policy variables found in current context"
         }
-    } else {
-        Write-Host "[$ScriptName - $FunctionName] No platform reboot policy variables found in current context"
-    }
 
     } catch {
         Write-Error "[$ScriptName - $FunctionName] Error gathering platform reboot policy context: $($_.Exception.Message)"
         $result.PolicySource = "Error"
     }
 
-        Write-Host "[$ScriptName - $FunctionName] Platform reboot policy context gathering complete"
+    $result | Format-List | Out-String | Write-Host -ForegroundColor Cyan
+    Write-Host "[$ScriptName - $FunctionName] Platform reboot policy context gathering complete"
     
-        return New-Object -TypeName PSObject -Property $result
-    }
+    return New-Object -TypeName PSObject -Property $result
+}
 
 function Get-C9UserActivityStatus {
     <#
@@ -1932,95 +1878,6 @@ function Get-C9ComputerLockedStatus {
     return New-Object -TypeName PSObject -Property $result
 }
 
-function Get-C9VariableFromAnyScope {
-    <#
-    .SYNOPSIS
-        Gets a PowerShell variable from any accessible scope with ConstrainedLanguage mode compatibility.
-    
-    .DESCRIPTION
-        This function searches for a PowerShell variable across multiple scopes and with multiple
-        name variations. It's designed to work in ConstrainedLanguage mode by avoiding string
-        methods that are restricted in that environment.
-    
-    .PARAMETER VariableName
-        The name of the variable to search for.
-    
-    .PARAMETER IncludeCommonVariations
-        Switch to include common reboot-related variable name variations in the search.
-    
-    .OUTPUTS
-        Returns the first variable object found, or $null if not found.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$VariableName,
-        
-        [Parameter(Mandatory = $false)]
-        [switch]$IncludeCommonVariations
-    )
-
-    $FunctionName = "Get-C9VariableFromAnyScope"
-
-    # Create variable name variations using ConstrainedLanguage-safe methods
-    $variableNames = @()
-    $variableNames += $VariableName
-    
-    # Add lowercase version using -replace instead of .ToLower()
-    $lowerName = $VariableName -replace '[A-Z]', { $_.Value.ToLowerInvariant() }
-    if ($lowerName -ne $VariableName) {
-        $variableNames += $lowerName
-    }
-    
-    # Add proper case version (first letter uppercase, rest lowercase)
-    if ($VariableName.Length -gt 0) {
-        $firstChar = $VariableName[0].ToString().ToUpperInvariant()
-        $restChars = ""
-        if ($VariableName.Length -gt 1) {
-            for ($i = 1; $i -lt $VariableName.Length; $i++) {
-                $restChars += $VariableName[$i].ToString().ToLowerInvariant()
-            }
-        }
-        $properCaseName = $firstChar + $restChars
-        if ($properCaseName -ne $VariableName -and $properCaseName -ne $lowerName) {
-            $variableNames += $properCaseName
-        }
-    }
-    
-    # Add common reboot-related variations if requested
-    if ($IncludeCommonVariations.IsPresent) {
-        $commonVariations = @(
-            "rebootPreference", "RebootPreference",
-            "promptTimeoutAction", "PromptTimeoutAction", 
-            "autoConsentToReboots", "AutoConsentToReboots",
-            "promptTimeout", "PromptTimeout"
-        )
-        foreach ($variation in $commonVariations) {
-            if ($variation -notin $variableNames) {
-                $variableNames += $variation
-            }
-        }
-    }
-    
-    # Try multiple scopes
-    $scopes = @('Local', 'Script', 'Global', '1', '2', '3')
-    
-    foreach ($varName in $variableNames) {
-        foreach ($scope in $scopes) {
-            try {
-                $var = Get-Variable -Name $varName -Scope $scope -ErrorAction SilentlyContinue
-                if ($null -ne $var -and -not [string]::IsNullOrWhiteSpace($var.Value)) {
-                    Write-Host "[$ScriptName - $FunctionName] Found $varName in scope $scope with value: '$($var.Value)'"
-                    return $var
-                }
-            } catch {
-                # Continue trying other scopes
-            }
-        }
-    }
-    return $null
-}
-
 Export-ModuleMember -Function @(
     'Invoke-C9EndpointCommand',
     'Test-C9IsUserLoggedIn',
@@ -2036,6 +1893,5 @@ Export-ModuleMember -Function @(
     'Invoke-ClearPendingDecisionLogic',
     'Test-UserActivityForReboot',
     'Get-C9ComputerLockedStatus',
-    'Get-C9VariableFromAnyScope',
     'Get-C9SystemRebootRequirements'
 )

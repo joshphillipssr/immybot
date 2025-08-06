@@ -1,8 +1,8 @@
-# Version: 20250721-01
+# Version: 20250726-01
 
 # Cloud 9 Dynamic Integration Script for SentinelOne
 
-$Integration = New-DynamicIntegration -Init { # Runs every 20 minutes
+$Integration = New-DynamicIntegration -Init {
     param(
         [Parameter(Mandatory)]
         [Uri]$S1Uri,
@@ -10,37 +10,50 @@ $Integration = New-DynamicIntegration -Init { # Runs every 20 minutes
         [Password(StripValue = $true)]
         $S1ApiKey
     )
-    Write-Host "--- [INIT] Script Initializing: $(Get-Date) ---"
-    Import-Module C9SentinelOne
-    $S1AuthHeader = Connect-C9S1API -S1Uri $S1Uri -S1APIToken $S1ApiKey -Verbose
-    
+    Write-Host "[Init] Init from C9DI-SentinelOne Script Initializing at (UTC): $(Get-Date)"
+    Write-Host "[Init] Before we start, let's make sure we have a URI and ApiKey..."
+    Write-Host "[Init] This is our `$S1Uri: $S1Uri"
+    Write-Host "[Init] For security reasons let's just confirm our `$S1ApiKey exists..."
+    Write-Host "[Init] Is `$S1ApiKey not `$null?: $($null -ne $S1ApiKey)"
+    Write-Host "[Init] Let's now get started by importing the C9SentinelOneCloud module..."
+    Import-Module C9SentinelOneCloud
+    Write-Host "[Init] Let's authenticate and define a `$S1AuthHeader object using the Connect-C9S1API function..."
+    $S1AuthHeader = Connect-C9S1API -S1Uri $S1Uri -S1APIToken $S1ApiKey
+    Write-Host "[Init] Now let's populate the `$IntegrationContext object's custom variables..."
     $IntegrationContext.S1Uri = $S1Uri
-    $IntegrationContext.S1ApiKey = $S1ApiKey
+    Write-Host "[Init] `$IntegrationContext.S1Uri: $IntegrationContext.S1Uri"
     $IntegrationContext.AuthHeader = $S1AuthHeader
-
+    Write-Host "[Init] `IntegrationContext.AuthHeader: $IntegrationContext.AuthHeader"
+    Write-Host "[Init] We're all done. Let's finish by printing the result..."
     [OpResult]::Ok()
     
 } -HealthCheck { #Runs every minute
     [CmdletBinding()]
     [OutputType([HealthCheckResult])]
     param()
-    Write-Host "--- [HEALTHCHECK] Running: $(Get-Date) ---"
+    Write-Host "[HealthCheck] HealthCheck C9DI-SentinelOne starting at (UTC): $(Get-Date) ---"
+    Write-Host "[HealthCheck] Before we start, let's see what custom properties we have in the `$IntegrationContext object..."
+    $IntegrationContext | Format-List *
+
     try {
-        Import-Module C9SentinelOne
-        Write-Verbose "Performing lightweight health check by calling system/info endpoint..."
+        Write-Host "[HealthCheck] Now let's import our C9SentinelOneCloud module..."
+        Import-Module C9SentinelOneCloud
+        Write-Host "[HealthCheck] We're ready to perform the HealthCheck with Invoke-C9S1RestMethod..."
+        Write-Host "[HealthCheck] Let's run our test against the 'system/info API endpoint..."
         Invoke-C9S1RestMethod -Endpoint 'system/info' -Verbose -ErrorAction Stop | Out-Null
-        Write-Verbose "Health check PASSED. API is responsive."
+        Write-Host "[HealthCheck] We're done with the HealthCheck. Here is the result..."
         return New-HealthyResult
     }
     catch {
-        $errorMessage = "Health check FAILED. The API token may be invalid or the service is unreachable. Error: $($_.Exception.Message)"
+        $errorMessage = "[HealthCheck] Health check FAILED. Error: $($_.Exception.Message)"
         Write-Error $errorMessage
         return New-UnhealthyResult -Message $errorMessage
     }
 }
 
-# --- AUTHENTICATED DOWNLOAD CAPABILITY ---
-# This is the newly discovered, mandatory capability for authenticated downloads.
+# --- AUTHENTICATED DOWNLOAD CAPABILITY (Corrected Signature) ---
+# This capability allows the native ImmyBot downloader to request the necessary
+# authentication headers for a specific URL before it attempts the download.
 $Integration | Add-DynamicIntegrationCapability -Interface ISupportsAuthenticatedDownload -GetAuthHeader {
     [CmdletBinding()]
     [OutputType([System.Collections.Hashtable])]
@@ -48,8 +61,23 @@ $Integration | Add-DynamicIntegrationCapability -Interface ISupportsAuthenticate
 
     # This capability's only job is to return the pre-existing authentication header
     # that was created and stored in the -Init block.
-    Write-Verbose "C9DI-SentinelOne: -GetAuthHeader capability invoked."
-    return $IntegrationContext.AuthHeader
+    Write-Host "[GetAuthHeader] Capability Invoked."
+    Write-Host "[GetAuthHeader] Before we start, let's see what custom properties we have in the `$IntegrationContext object..."
+    $IntegrationContext | Format-List *
+    
+    Write-Host "[GetAuthHeader] Verifying the presence of the implicit `$Url variable..."
+    if (-not $Url) {
+        throw "[GetAuthHeader] CRITICAL: The platform did not provide the implicit `$Url variable to this context."
+    }
+    Write-Host "[GetAuthHeader] The URL provided by the platform is: $($Url)"
+    
+    # We only provide the header for our S1 API. For any other URL, we'd return $null.
+    if ($Url.Host -like "*.sentinelone.net") {
+        return $IntegrationContext.AuthHeader
+    } else {
+        # For other URLs, no auth is needed.
+        return $null
+    }
 }
 
 # Gets list of all tenants from S1 API
@@ -58,7 +86,7 @@ $Integration | Add-DynamicIntegrationCapability -Interface ISupportsListingClien
     [OutputType([Immybot.Backend.Domain.Providers.IProviderClientDetails[]])]
     param()
     Write-Host "--- [GET-CLIENTS] Running: $(Get-Date) ---"
-    Import-Module C9SentinelOne
+    Import-Module C9SentinelOneCloud
     Get-C9S1Site -Verbose | ForEach-Object {
         if ($_.state -eq "active") {
             New-IntegrationClient -ClientId $_.Id -ClientName $_.Name
@@ -75,7 +103,7 @@ $Integration | Add-DynamicIntegrationCapability -Interface ISupportsListingAgent
         [string[]]$clientIds = $null
     )
     Write-Host "--- [GET-AGENTS] Running: $(Get-Date) ---"
-    Import-Module C9SentinelOne
+    Import-Module C9SentinelOneCloud
     Get-C9S1Agent -Verbose -SiteID $clientIds | ForEach-Object {
         New-IntegrationAgent -Name $_.computerName `
             -SerialNumber $_.serialNumber `
@@ -98,7 +126,10 @@ $Integration |  Add-DynamicIntegrationCapability -Interface ISupportsTenantInsta
         [Parameter(Mandatory=$true)]
         [string]$clientId
     )
-    Import-Module C9SentinelOne
+    # Write-Host "[GetTenantInstallToken] Capability Invoked."
+    # Write-Host "[GetTenantInstallToken] Before we start, let's see what custom properties we have in the `$IntegrationContext object..."
+    # $IntegrationContext | Format-List *
+    Import-Module C9SentinelOneCloud
     Get-C9S1Site -Id $clientId | ForEach-Object{ $_.registrationToken}
 }
 
@@ -121,16 +152,69 @@ $Integration | Add-DynamicIntegrationCapability -Interface ISupportsDynamicVersi
         [Parameter(Mandatory = $True)]
         [System.String]$ExternalClientId
     )
-    Write-Host "Importing Module (capability)"
-    Import-Module C9SentinelOne
+    Write-Host "[GetDynamicVersions] Before we start, let's see what custom properties we have in the `$IntegrationContext object..."
+    $IntegrationContext | Format-List *
+    Import-Module C9SentinelOneCloud
+    
+    $authHeader = $IntegrationContext.AuthHeader
+    if (-not $authHeader) {
+        throw "AuthHeader not found in IntegrationContext. The -Init block may have failed."
+    }
+
+    Write-Host "[GetDynamicVersions] GetDynamicVersions invoked. AuthHeader is present. Processing packages..."
+
     $GroupedPackages = Get-C9S1AvailablePackages
     foreach ($group in $GroupedPackages.GetEnumerator()) {
-        $versionData = $group.Value
-        if ($versionData.EXE) {
-            New-DynamicVersion -Url $versionData.EXE.link -Version $versionData.Version -FileName $versionData.EXE.fileName -Architecture $versionData.Architecture -PackageType Executable
+        
+        try {
+            # --- START DIAGNOSTIC HARNESS ---
+            # First, we log the object we are about to process so we can see its structure.
+            $versionDataJson = $group.Value | ConvertTo-Json -Depth 5
+            Write-Host "[GetDynamicVersions] Processing package object: $versionDataJson"
+            # --- END DIAGNOSTIC HARNESS ---
+
+            $versionData = $group.Value
+
+            # This is the logic block we need to test
+            if ($versionData.EXE) {
+                $package = $versionData.EXE
+                $packageType = 'Executable'
+            }
+            elseif ($versionData.MSI) {
+                # Based on the error, "MSI" is not a valid PackageType.
+                # We will skip MSI packages for now to see if this resolves the error.
+                # If we need MSI support, we must find the correct string for the enum.
+                Write-Host "[GetDynamicVersions] Skipping MSI package for version $($versionData.Version)."
+                continue # Skip to the next item in the loop
+            }
+            else {
+                # This handles the case where the object has neither EXE nor MSI.
+                throw "[GetDynamicVersions] Package object for version $($versionData.Version) is malformed and contains no installer."
+            }
+            
+            # Create the standard DynamicVersion object
+            $versionObject = New-DynamicVersion -Url $package.link -Version $versionData.Version -FileName $package.fileName -Architecture $versionData.Architecture -PackageType $packageType
+            
+            # Attach the auth header directly to the object.
+            $versionObject | Add-Member -MemberType NoteProperty -Name 'AuthHeader' -Value $authHeader
+            
+            Write-Host "[GetDynamicVersions] Created DynamicVersion for $($versionData.Version) and attached AuthHeader."
+            
+            # Return the modified object to the platform
+            $versionObject
         }
-        elseif ($versionData.MSI) {
-            New-DynamicVersion -Url $versionData.MSI.link -Version $versionData.Version -FileName $versionData.MSI.fileName -Architecture $versionData.Architecture -PackageType MSI
+        catch {
+            # --- CATCH BLOCK FOR DIAGNOSTICS ---
+            # If any part of the 'try' block fails, we land here.
+            # Instead of crashing, we log the error and the data that caused it.
+            $errorMessage = $_.Exception.Message
+            $badObjectJson = $group.Value | ConvertTo-Json -Depth 5
+            Write-Warning "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+            Write-Warning "!!! [GetDynamicVersions] Failed to process a package object."
+            Write-Warning "!!! [GetDynamicVersions] Error: $errorMessage"
+            Write-Warning "!!! [GetDynamicVersions] The object that caused the failure was: $badObjectJson"
+            Write-Warning "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+            # We continue to the next loop iteration instead of stopping the whole script.
         }
     }
 }
@@ -142,7 +226,7 @@ $Integration | Add-DynamicIntegrationCapability -Interface ISupportsTenantUninst
         [Parameter(Mandatory=$true)]
         [string]$clientId
     )
-    Import-Module C9SentinelOne
+    Import-Module C9SentinelOneCloud
     $siteObject = Get-C9S1Site -Id $clientId
     return $siteObject.passphrase
 }

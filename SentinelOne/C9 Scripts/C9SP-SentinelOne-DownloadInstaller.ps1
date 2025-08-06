@@ -1,48 +1,92 @@
-<#
-.SYNOPSIS
-    Downloads the SentinelOne installer using the C9DIS-SentinelOne integration and the platform's native Download-File cmdlet.
-.DESCRIPTION
-    This script runs in the Metascript context. It leverages the C9DIS-SentinelOne integration
-    to retrieve an authentication header, then passes that header along with the platform-provided
-    URL to the built-in 'Download-File' function to perform a secure, authenticated download.
-.NOTES
-    Author:     Josh Phillips
-    Created:    07/22/2025
-    Version:    20250722-01
-#>
+# =================================================================================
+# Name:     C9SP-SentinelOne-DownloadInstaller Script
+# Author:   Josh Phillips
+# Contact:  josh@c9cg.com
+# Docs:     https://immydocs.c9cg.com
+# =================================================================================
 
-# This entire script runs in the Metascript context.
-# We wrap the logic in a try/catch block for robust error handling.
+$persistentInstallerDir = "C:\ProgramData\ImmyBot\S1\Installer"
+$s1InstallerUrl = "https://raw.githubusercontent.com/joshphillipssr/immybot/54f9725dc1d7fea485b2c77d075b618c38f08f15/SentinelOne/Tools/SentinelOneInstaller_windows_64bit_v24_2_3_471.exe"
+$sevenZipUrl = "https://raw.githubusercontent.com/joshphillipssr/immybot/main/SentinelOne/Tools/7z2500-extra.zip"
+
+$s1FileName = $s1InstallerUrl.Split('/')[-1]
+$persistentDestinationPath = Join-Path -Path $persistentInstallerDir -ChildPath $s1FileName
+$sevenZipZipDestinationPath = Join-Path -Path $persistentInstallerDir -ChildPath "7z-extra.zip"
+
+# --- SCRIPT BODY ---
+Write-Host "[$ScriptName] Starting SentinelOne Download Script ---"
+
 try {
-    Write-Host "--- Download Process ---"
+    # Step 1: Ensure the persistent directory exists on the endpoint.
+    Write-Host "[$ScriptName] Ensuring destination directory '$persistentInstallerDir' exists on endpoint..."
+    Invoke-ImmyCommand -ScriptBlock {
+        New-Item -Path $using:persistentInstallerDir -ItemType Directory -Force | Out-Null
+    }
 
-    # Step 1: Import our custom module to gain access to our helper functions.
-    Write-Host "Importing C9SentinelOne module..."
-    Import-Module C9SentinelOne -ErrorAction Stop
+    # Step 2: Download the EXE installer.
+    Write-Host "[$ScriptName] Executing Download-File to retrieve the installer EXE..."
+    Download-File $s1InstallerUrl -Destination $persistentDestinationPath
+    Write-Host "[$ScriptName] Download of EXE completed successfully."
 
-    # Step 2: Get the authentication header from our integration.
-    # This call to our new, lightweight helper function replaces the manual API connection from the default scripts.
-    Write-Host "Retrieving auth header from the C9DIS-SentinelOne integration..."
-    $AuthHeader = Get-C9S1AuthHeader -ErrorAction Stop
+    # Step 3: Download the portable 7-Zip utility package.
+    Write-Host "[$ScriptName] Downloading portable 7-Zip utility package..."
+    Download-File $sevenZipUrl -Destination $sevenZipZipDestinationPath
+    Write-Host "[$ScriptName] Download of portable 7-Zip completed successfully."
 
-    # Step 3: Call the built-in ImmyBot Download-File function.
-    # The $URL and $InstallerFile variables are automatically populated by the platform at this stage
-    # with the data from the DynamicVersion object that was created by our integration.
-    Write-Host "Passing authenticated download request to the ImmyBot platform..."
-    Write-Host "Source URL: $URL"
-    Write-Host "Destination Path: $InstallerFile"
+    # Step 4: Unpack the downloaded EXE using our new portable utility.
+    Write-Host "[$ScriptName] Unpacking the EXE with portable 7-Zip to extract the MSI installer..."
+    Invoke-ImmyCommand -ScriptBlock {
+        $s1ExePath = $using:persistentDestinationPath
+        $extractDir = $using:persistentInstallerDir
+        $zipPath = $using:sevenZipZipDestinationPath
+        
+        $tempUnpackDir = Join-Path -Path $extractDir -ChildPath "7z-temp"
+        
+        try {
+            # Step 4a: Unpack the 7-Zip utility package using native PowerShell tools.
+            Write-Host "[$using:ScriptName] Unpacking 7-Zip utility with native Expand-Archive..."
+            Expand-Archive -LiteralPath $zipPath -DestinationPath $tempUnpackDir -Force
+            
+            # --- MODIFICATION START ---
+            # Step 4b: Dynamically find the 7za.exe regardless of the subfolder name.
+            Write-Host "[$using:ScriptName] Searching for portable unpacker in '$tempUnpackDir'..."
+            $unpacker = Get-ChildItem -Path $tempUnpackDir -Filter "7za.exe" -Recurse | Select-Object -First 1
+            
+            if (-not $unpacker) {
+                throw "[$using:ScriptName] Could not find '7za.exe' within the extracted ZIP package."
+            }
+            $unpackerPath = $unpacker.FullName
+            Write-Host "[$using:ScriptName] Portable unpacker found at '$unpackerPath'."
 
-    # This is the call to the platform's own powerful download engine.
-    Download-File -Source $URL -Destination $InstallerFile -Headers $AuthHeader -ErrorAction Stop
-
-    Write-Host "[SUCCESS] Download-File cmdlet completed successfully."
-    Write-Host "Installer has been downloaded to '$InstallerFile'."
-    Write-Host "Download process done. Let's move on..."
+            # Step 4c: Use the portable unpacker to extract the S1 installer.
+            Write-Host "[$using:ScriptName] Attempting to extract archive '$s1ExePath' to '$extractDir' using portable utility..."
+            & $unpackerPath "x" $s1ExePath "-o$extractDir" "-y"
+            # --- MODIFICATION END ---
+            
+            Write-Host "[$using:ScriptName] Successfully unpacked the S1 archive using the portable 7za.exe."
+        }
+        catch {
+            $errorMessage = "[$using:ScriptName] Failed to unpack an archive on the endpoint. Error: $($_.Exception.Message)"
+            Write-Error "[$using:ScriptName] $errorMessage"
+            throw "[$using:ScriptName] $errorMessage"
+        }
+        finally {
+            # Step 4d: Clean up all the temporary 7-Zip files.
+            Write-Host "[$using:ScriptName] Cleaning up temporary unpacker files..."
+            if (Test-Path $zipPath) {
+                Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
+                }
+            if (Test-Path $tempUnpackDir) {
+                Remove-Item -LiteralPath $tempUnpackDir -Recurse -Force -ErrorAction SilentlyContinue
+                }
+        }
+    }
+    Write-Host "[$ScriptName] MSI extraction complete."
 }
 catch {
-    # If any step fails, this block will catch the error and report it clearly.
-    # Casting $_ to a string is the ConstrainedLanguage-safe way to get the full error message.
-    $errorMessage = "FATAL: The DownloadInstaller script failed. Error: $([string]$_)"
-    Write-Error $errorMessage
-    throw $errorMessage
+    $errorMessage = "[$ScriptName] The download/unpack process failed. Error: $($_.Exception.Message)"
+    Write-Error "[$using:ScriptName] $errorMessage"
+    throw "[$using:ScriptName] $errorMessage"
 }
+
+Write-Host "[$ScriptName] Download & Unpack Script Complete"

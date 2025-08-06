@@ -92,4 +92,4 @@ try {
 # --- Final Output ---
 Write-Host "--- Harness Execution Complete. Returning JSON Report. ---"
 Write-Host "--- Copy/paste the output below into jsononline.net/json-beautifier to view it nicely formatted. ---"
-return $report | ConvertTo-Json -Depth 10
+return $report | ConvertTo-Json -Depth 5

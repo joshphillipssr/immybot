@@ -17,12 +17,12 @@ function Connect-C9S1API {
     # This does not use Invoke-C9S1RestMethod to avoid dependency issues before the context is populated.
     $ValidationEndpoint = "$($S1Uri)web/api/v2.1/system/info"
     try {
-        Write-Host "Validating credentials against endpoint: $ValidationEndpoint"
+        Write-Host "[Connect-C9S1API] Validating credentials against API endpoint: $ValidationEndpoint"
         $SystemInfo = Invoke-RestMethod -Uri $ValidationEndpoint -Headers $S1AuthHeader -Method Get -ErrorAction Stop
 
         # The S1 API wraps the payload in a 'data' property.
         if ($SystemInfo.data.latestAgentVersion) {
-            Write-Host "Successfully authenticated to SentinelOne API. Latest Agent Version: $($SystemInfo.data.latestAgentVersion)"
+            Write-Host "[Connect-C9S1API] Successfully authenticated to SentinelOne API. Latest Agent Version: $($SystemInfo.data.latestAgentVersion)"
             # On success, return the validated header.
             return $S1AuthHeader
         } else {
@@ -56,32 +56,30 @@ function Invoke-C9S1RestMethod {
 
     if ($Body) {
         $params.body = $body
-        Write-Host "ThisBody:`r`n$($params.Body)"
+        Write-Host "[Invoke-C9S1RestMethod] ThisBody:`r`n$($params.Body)"
     }
 
-    # REFACTOR: This function now relies *exclusively* on the IntegrationContext.
-    # The legacy fallback to script-scoped variables has been removed.
     $AuthHeader = $IntegrationContext.AuthHeader
     $BaseUri = $IntegrationContext.S1Uri
     $Uri = "$($BaseUri)web/api/v2.1/$($Endpoint)"
 
     # Add a check to ensure the context was passed correctly.
     if (-not ($AuthHeader -and $BaseUri)) {
-        throw "IntegrationContext is not properly initialized. AuthHeader or S1Uri is missing."
+        throw "[Invoke-C9S1RestMethod] IntegrationContext is not properly initialized. AuthHeader or S1Uri is missing."
     }
     
     try {
         do {
             if ($QueryParameters) {
-                Write-Host "QueryParameters: $($QueryParameters | Out-String)"
+                Write-Host "[Invoke-C9S1RestMethod] This is the `$QueryParameters value: $($QueryParameters | Out-String)"
                 $UriWithQuery = Add-UriQueryParameter -Uri $Uri -Parameter $QueryParameters
                 $UriWithQuery = $UriWithQuery.ToString().Replace("+", "%20")
             }
-            Write-Host $UriWithQuery
+            Write-Host "[Invoke-C9S1RestMethod] This is the `$UriWithQuery value: $UriWithQuery"
             $Results = $null
-            Write-Host "Executing API call to final constructed URI: $UriWithQuery"
+            Write-Host "[Invoke-C9S1RestMethod] Executing API call to final constructed URI: $UriWithQuery"
             Invoke-RestMethod -Uri $UriWithQuery -Headers $AuthHeader @params -ErrorAction Stop | Tee-Object -Variable Results | Select-Object -Expand data 
-            $Results | Format-List * | Out-String | Write-Host
+            # $Results | Format-List * | Out-String | Write-Host
             
             if ($Results.pagination -and $Results.pagination.nextcursor) {
                 $QueryParameters.cursor = $Results.pagination.nextcursor
@@ -89,8 +87,8 @@ function Invoke-C9S1RestMethod {
         } while ($Results.pagination -and $Results.pagination.nextcursor)
     } catch {
         if ($_.Exception.Response.StatusCode -eq "Unauthorized") {
-            Write-Error "Unauthorized when accessing $Uri, please ensure the user associated with the API Key can access this endpoint."
-            Write-Error "Possible reasons for Unauthorized access: API token may have expired, is invalid, or does not have the required permissions."
+            Write-Error "[Invoke-C9S1RestMethod] Unauthorized when accessing $Uri, please ensure the user associated with the API Key can access this endpoint."
+            Write-Error "[Invoke-C9S1RestMethod] Possible reasons for Unauthorized access: API token may have expired, is invalid, or does not have the required permissions."
             Write-Error -Exception $_.Exception -ErrorAction Stop
         } else {
             throw $_ #.Exception.Response
@@ -128,8 +126,8 @@ function Get-C9S1Site {
         $Endpoint += "/$id"
         Invoke-C9S1RestMethod -Endpoint $Endpoint
         # Potential issue Number 4. Need to test implimenting the following change:
-        return Invoke-C9S1RestMethod -Endpoint $Endpoint
-        # org: return
+        # return Invoke-C9S1RestMethod -Endpoint $Endpoint
+        return
     }
 
     $QueryParameters = @{}
@@ -253,17 +251,20 @@ function Get-C9S1AvailablePackages {
     [CmdletBinding()]
     param()
 
-    # This function assumes the $IntegrationContext is already populated.
+    Write-Host "[Get-C9S1AvailablePackages] Let's build our `$QueryParameters object..."
     $QueryParameters = @{
         limit          = 50; status = 'ga'; sortBy = 'version'; sortOrder = 'desc';
         osTypes        = 'windows'; fileExtensions = '.exe,.msi'; osArches = '64 bit,32 bit,ARM64'
     }
+    Write-Host "[Get-C9S1AvailablePackages] Our `$QueryParameters is: $QueryParameters"
 
-    # This now works because Invoke-C9S1RestMethod will use the credentials from the context.
+    Write-Host "[Get-C9S1AvailablePackages] We'll build our `$DownloadLinks object with Invoke-C9S1RestMethod..."
+    Write-Host "[Get-C9S1AvailablePackages] The API endpoint will be 'update/agent/packages'..."
     $DownloadLinks = Invoke-C9S1RestMethod -Endpoint "update/agent/packages" -QueryParameters $QueryParameters
-    Write-Host "Retrieved $($DownloadLinks.Count) package links. Now grouping and prioritizing..."
+    Write-Host "[Get-C9S1AvailablePackages] Retrieved $($DownloadLinks.Count) package links. Now grouping and prioritizing..."
 
-    # Your proven logic for grouping and prioritizing .exe over .msi remains unchanged.
+    # Iterate through the list and group the installers into an [ordered] hashtable $GroupedVersions
+    # so we know how to handle cases where both an exe and msi exist for the same version and architecture.
     $GroupedVersions = [ordered]@{}
     foreach ($link in $DownloadLinks) {
         if ($link.fileName -like "storage-agent-installer*") { continue }
@@ -278,6 +279,7 @@ function Get-C9S1AvailablePackages {
         if (-not $GroupedVersions[$GroupKey]) {
             $GroupedVersions[$GroupKey] = @{ Version = $Version; Architecture = $FileArchitecture; EXE = $null; MSI = $null }
         }
+        # exe is default
         if ($link.fileExtension -eq '.exe') { $GroupedVersions[$GroupKey].EXE = $link }
         elseif ($link.fileExtension -eq '.msi') { $GroupedVersions[$GroupKey].MSI = $link }
     }
@@ -327,6 +329,60 @@ function Get-C9S1AgentPassphrase {
     }
 }
 
+function Invoke-S1RestMethod {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Endpoint,
+        [string]$Method,
+        [string]$Body,
+        [HashTable]$QueryParameters = @{}
+    )
+
+    $Endpoint = $Endpoint.TrimStart('/')
+    $params = @{}
+    $params.ContentType = 'application/json'
+
+    if ($Method) {
+        $params.method = $Method
+    }
+
+    if ($Body) {
+        $params.body = $body
+        Write-Verbose "ThisBody:`r`n$($params.Body)"
+    }
+
+    $AuthHeader = $IntegrationContext.AuthHeader ?? $script:S1AuthHeader
+    $BaseUri = $IntegrationContext.S1Uri ?? $script:S1Uri
+    $Uri = "$($BaseUri)web/api/v2.1/$($Endpoint)"
+    
+    try {
+        do {
+            if ($QueryParameters) {
+                Write-Verbose "QueryParameters: $($QueryParameters | Out-String)"
+                $UriWithQuery = Add-UriQueryParameter -Uri $Uri -Parameter $QueryParameters
+                $UriWithQuery = $UriWithQuery.ToString().Replace("+", "%20")
+            }
+            Write-Verbose $UriWithQuery
+            $Results = $null
+            Invoke-RestMethod -Uri $UriWithQuery -Headers $AuthHeader @params -ErrorAction Stop | Tee-Object -Variable Results | Select-Object -Expand data 
+            $Results | Format-List * | Out-String | Write-Verbose
+            
+            if ($Results.pagination -and $Results.pagination.nextcursor) {
+                $QueryParameters.cursor = $Results.pagination.nextcursor
+            }
+        } while ($Results.pagination -and $Results.pagination.nextcursor)
+    } catch {
+        if ($_.Exception.Response.StatusCode -eq "Unauthorized") {
+            Write-Error "Unauthorized when accessing $Uri, please ensure the user associated with the API Key can access this endpoint."
+            Write-Error "Possible reasons for Unauthorized access: API token may have expired, is invalid, or does not have the required permissions."
+            Write-Error -Exception $_.Exception -ErrorAction Stop
+        } else {
+            throw $_ #.Exception.Response
+        }
+    }
+}
+
 Export-ModuleMember -Function @(
     "Connect-C9S1API",
     "Invoke-C9S1RestMethod",
@@ -334,5 +390,6 @@ Export-ModuleMember -Function @(
     "Get-C9S1Site",
     "Get-C9S1Agent",
     "Get-C9S1AvailablePackages",
-    "Get-C9S1AgentPassphrase"
+    "Get-C9S1AgentPassphrase",
+    "Invoke-S1RestMethod"
 )

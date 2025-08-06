@@ -1,3 +1,10 @@
+# =================================================================================
+# Name:     C9SP-SentinelOne-ConfigTask-Get Script
+# Author:   Josh Phillips
+# Contact:  josh@c9cg.com
+# Docs:     https://immydocs.c9cg.com
+# =================================================================================
+
 #Requires -Version 5.1
 <#
 .SYNOPSIS
@@ -11,7 +18,7 @@
 .NOTES
     Author:     Josh Phillips
     Created:    07/18/2025
-    Version:    1.1.0 - Verbose Audit "Get" Script
+    Version:    1.2.0 - Cleaned up final output logging.
 #>
 
 # =================================================================================
@@ -26,15 +33,11 @@ try {
     $agentState = Invoke-ImmyCommand -ScriptBlock {
         # =========================================================================
         # --- Endpoint SYSTEM Context ---
-        # This code is now running on the Windows endpoint.
         # =========================================================================
         
-        # Ensure verbose messages from this block are streamed.
         $VerbosePreference = 'Continue'
-        
         Write-Verbose "--- [ENDPOINT] Starting health audit ---"
 
-        # --- Define state variables ---
         $result = [PSCustomObject]@{
             IsInstalled    = $false
             ServiceState   = 'Not Found'
@@ -81,7 +84,6 @@ try {
         if ($ctlPath) {
             Write-Verbose "    - Found SentinelCtl.exe at: $ctlPath"
             try {
-                # Execute the command, trim whitespace, and suppress the tool's own verbose output (stderr)
                 $agentId = (& $ctlPath agent_id 2>$null).Trim()
                 if (-not [string]::IsNullOrWhiteSpace($agentId)) {
                     $result.AgentId = $agentId
@@ -97,17 +99,15 @@ try {
         }
         
         Write-Verbose "--- [ENDPOINT] Health audit complete. ---"
-        # Return the final, simple object.
         return $result
     }
 
-    # Log the final collected object to the UI for clarity.
-    Write-Host "[SUCCESS] Agent state collected. Final configuration object:"
-    $agentState | Format-Table | Out-String | Write-Host
+    # The ImmyBot engine will automatically log the object returned by the script.
+    # No need to manually format and write it here.
+    Write-Host "[SUCCESS] Agent state collection complete."
     return $agentState
 
 } catch {
-    # This will catch any fatal errors, like if Invoke-ImmyCommand fails.
     $errorMessage = "A fatal error occurred during the GET operation: $($_.Exception.Message)"
     Write-Error $errorMessage
     throw $errorMessage

@@ -7,158 +7,181 @@
     configuration of a SentinelOne agent directly on an endpoint. It is designed to run in the
     local System context and contains no cloud-facing or API-related logic.
 
-    Unlike the metascript context which runs in Powershell Core ConstrainedLanguage mode, this module
-    is intended for use in the local System context where it runs in Powershell 5.1 Full Language mode.
+    All functions are prefixed with 'C9-' to denote they are part of the Cloud 9 custom library.
+    Functions are organized by verb (Get, Test) for clarity and maintainability.
 .NOTES
     Author:     Josh Phillips
     Created:    07/15/2025
-    Version:    2.0.0
+    Version:    3.0.0
 #>
 
 # Export all functions so they are available to any script that imports this module.
-Export-ModuleMember -Function *
 
-#region Presence Detection Functions (Granular)
+#region Test Functions (Return Boolean)
+#==================================================================================================
 
-function Test-S1ServicePresence {
+function Test-C9S1ServicePresence {
     <# .SYNOPSIS Checks for the existence of the primary SentinelAgent service. #>
     [CmdletBinding()]
     [OutputType([boolean])]
     param()
-    return [boolean](Get-Service -Name 'SentinelAgent' -ErrorAction SilentlyContinue)
+    Write-Verbose "Testing for presence of 'SentinelAgent' service..."
+    $isPresent = [boolean](Get-Service -Name 'SentinelAgent' -ErrorAction SilentlyContinue)
+    Write-Verbose "Service presence check result: $isPresent"
+    return $isPresent
 }
 
-function Test-S1InstallPathPresence {
+function Test-C9S1InstallPathPresence {
     <# .SYNOPSIS Checks for the existence of the default S1 installation directory. #>
     [CmdletBinding()]
     [OutputType([boolean])]
     param()
     $installPath = Join-Path -Path $env:ProgramFiles -ChildPath 'SentinelOne\Sentinel Agent'
-    return Test-Path -Path $installPath
+    Write-Verbose "Testing for presence of install path: '$installPath'..."
+    $isPresent = Test-Path -Path $installPath
+    Write-Verbose "Install path presence check result: $isPresent"
+    return $isPresent
 }
 
-function Test-S1UpgradeCodePresence {
+function Test-C9S1UpgradeCodePresence {
     <# .SYNOPSIS Checks for the "ghost state" UpgradeCode registry key. This is a key MSI health indicator. #>
     [CmdletBinding()]
     [OutputType([boolean])]
     param()
     # The GUID {47529454-1563-479A-8724-5214532589F3} is stored in a reversed format by the Windows Installer.
     $upgradeCodePath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UpgradeCodes\454925743651A974784225413552983F'
-    return Test-Path -Path $upgradeCodePath
+    Write-Verbose "Testing for presence of UpgradeCode registry key..."
+    $isPresent = Test-Path -Path $upgradeCodePath
+    Write-Verbose "UpgradeCode presence check result: $isPresent"
+    return $isPresent
 }
 
-#endregion
-
-#region Health & State Functions
-
-function Get-S1AgentVersion {
-    <#
-    .SYNOPSIS
-        Gets the agent version from the live SentinelAgent.exe file properties.
-    .DESCRIPTION
-        Uses the battle-tested logic from T20250611.0014 to reliably get the version from the
-        running service's executable, avoiding unreliable registry methods and preventing
-        PowerShell output stream pollution that can confuse automation engines like ImmyBot.
-    .OUTPUTS
-        [string] The product version string (e.g., '24.2.3.471') or $null if not found.
-    #>
-    [CmdletBinding()]
-    [OutputType([string])]
-    param()
-
-    try {
-        # Query for the service using Get-CimInstance as it's more robust. Suppress its object output.
-        $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='SentinelAgent'" -ErrorAction SilentlyContinue
-        if (-not $service) { return $null }
-
-        $exePath = $service.PathName.Trim('"')
-
-        # Use -LiteralPath for robustness against special characters.
-        if (Test-Path -LiteralPath $exePath) {
-            # Get the version directly from the property to avoid outputting the full FileInfo object.
-            $version = (Get-Item -LiteralPath $exePath).VersionInfo.ProductVersion
-            if ($version) {
-                # This is the ONLY thing that should write to the success stream.
-                return $version
-            }
-        }
-    }
-    catch {
-        # On any unexpected/terminating error, return null to signal "not found".
-        Write-Warning "An error occurred while getting agent version: $($_.Exception.Message)"
-        return $null
-    }
-    # If any check above fails to return, explicitly return null.
-    return $null
-}
-
-function Test-S1ServicesAllRunning {
+function Test-C9S1ServicesAllRunning {
     <# .SYNOPSIS Checks that all required SentinelOne services are present and in a 'Running' state. #>
     [CmdletBinding()]
     [OutputType([boolean])]
     param()
-
+    Write-Verbose "Testing if all required S1 services are running..."
     $s1Services = @(
         'SentinelAgent',
         'SentinelStaticEngine',
         'SentinelHelperService',
         'SentinelLogProcessor'
     )
-
     foreach ($serviceName in $s1Services) {
         $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
-        if (-not $service -or $service.Status -ne 'Running') {
-            Write-Warning "Service check failed: '$serviceName' is not present or not running."
+        if (-not $service) {
+            Write-Warning "Service check [FAIL]: '$serviceName' is not installed."
             return $false
         }
+        if ($service.Status -ne 'Running') {
+            Write-Warning "Service check [FAIL]: '$serviceName' is present but status is '$($service.Status)'."
+            return $false
+        }
+        Write-Verbose "Service check [PASS]: '$serviceName' is running."
     }
+    Write-Verbose "All required SentinelOne services are confirmed running."
     return $true
 }
 
-function Get-S1CtlPath {
+#endregion Test Functions
+
+#region Get Functions (Return Data)
+#==================================================================================================
+
+function Get-C9S1AgentVersion {
+    <# .SYNOPSIS Gets the agent version from the live SentinelAgent.exe file properties. #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    Write-Verbose "Attempting to get agent version from running service executable..."
+    try {
+        $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='SentinelAgent'" -ErrorAction SilentlyContinue
+        if (-not $service) {
+            Write-Verbose "Agent version not found: 'SentinelAgent' service does not exist."
+            return $null
+        }
+        $exePath = $service.PathName.Trim('"')
+        if (Test-Path -LiteralPath $exePath) {
+            $version = (Get-Item -LiteralPath $exePath).VersionInfo.ProductVersion
+            if ($version) {
+                Write-Verbose "Successfully retrieved agent version '$version' from '$exePath'."
+                return $version
+            }
+        }
+    }
+    catch {
+        Write-Warning "An error occurred while getting agent version: $($_.Exception.Message)"
+        return $null
+    }
+    Write-Verbose "Agent version could not be determined."
+    return $null
+}
+
+function Get-C9S1CtlPath {
     <# .SYNOPSIS Finds the full path to the SentinelCtl.exe utility. #>
     [CmdletBinding()]
     [OutputType([string])]
     param()
-
     $ctlPath = Join-Path -Path $env:ProgramFiles -ChildPath 'SentinelOne\Sentinel Agent\SentinelCtl.exe'
-    if (Test-Path -Path $ctlPath) { return $ctlPath }
+    Write-Verbose "Checking for SentinelCtl.exe at '$ctlPath'..."
+    if (Test-Path -Path $ctlPath) {
+        Write-Verbose "SentinelCtl.exe found."
+        return $ctlPath
+    }
+    Write-Verbose "SentinelCtl.exe not found."
     return $null
 }
 
-function Get-S1AgentId {
+function Get-C9S1AgentId {
     <# .SYNOPSIS Retrieves the local agent's UUID using SentinelCtl.exe. #>
     [CmdletBinding()]
     [OutputType([string])]
     param([Parameter(Mandatory = $true)][string]$CtlPath)
-
-    # Function logic remains the same...
-    if (-not(Test-Path -Path $CtlPath)) { return $null }
+    Write-Verbose "Attempting to get Agent ID via SentinelCtl..."
+    if (-not(Test-Path -Path $CtlPath)) {
+        Write-Warning "Cannot get Agent ID because SentinelCtl.exe was not found."
+        return $null
+    }
     try {
         $agentId = (& $CtlPath agent_id 2>&1).Trim()
-        if ($agentId -and $agentId -notlike "*error*") { return $agentId }
+        if ($agentId -and $agentId -notlike "*error*") {
+            Write-Verbose "Retrieved Agent ID: $agentId"
+            return $agentId
+        }
         throw "Command returned invalid output: $agentId"
-    } catch { return $null }
+    } catch {
+        Write-Warning "Failed to execute 'SentinelCtl.exe agent_id': $($_.Exception.Message)"
+        return $null
+    }
 }
 
-function Get-S1CtlStatus {
+function Get-C9S1CtlStatus {
     <# .SYNOPSIS Retrieves the full, raw status output from SentinelCtl.exe. #>
     [CmdletBinding()]
     [OutputType([string])]
     param([Parameter(Mandatory = $true)][string]$CtlPath)
-    
-    # Function logic remains the same...
-    if (-not(Test-Path -Path $CtlPath)) { return $null }
+    Write-Verbose "Attempting to get full status output via SentinelCtl..."
+    if (-not(Test-Path -Path $CtlPath)) {
+        Write-Warning "Cannot get Ctl Status because SentinelCtl.exe was not found."
+        return $null
+    }
     try {
-        return (& $CtlPath status 2>&1 | Out-String).Trim()
-    } catch { return $null }
+        $statusOutput = (& $CtlPath status 2>&1 | Out-String).Trim()
+        Write-Verbose "Successfully retrieved status from SentinelCtl.exe."
+        return $statusOutput
+    } catch {
+        Write-Warning "Failed to execute 'SentinelCtl.exe status': $($_.Exception.Message)"
+        return $null
+    }
 }
 
-#endregion
+#endregion Get Functions
 
-#region Master Function
+#region Master Orchestrator Function
+#==================================================================================================
 
-function Get-S1LocalHealthReport {
+function Get-C9S1LocalHealthReport {
     <#
     .SYNOPSIS
         The primary public function. Gathers a comprehensive and granular health report.
@@ -173,11 +196,13 @@ function Get-S1LocalHealthReport {
     [OutputType([PSCustomObject])]
     param()
 
+    Write-Host "--- Generating Local SentinelOne Health Report ---"
+
     $report = [ordered]@{
         # Granular presence checks
-        ServiceIsPresent    = Test-S1ServicePresence
-        InstallPathExists   = Test-S1InstallPathPresence
-        UpgradeCodeExists   = Test-S1UpgradeCodePresence
+        ServiceIsPresent    = Test-C9S1ServicePresence -Verbose:$false
+        InstallPathExists   = Test-C9S1InstallPathPresence -Verbose:$false
+        UpgradeCodeExists   = Test-C9S1UpgradeCodePresence -Verbose:$false
         # High-level summary flag
         IsPresent           = $false
         # Detailed health metrics
@@ -190,22 +215,77 @@ function Get-S1LocalHealthReport {
     # Set the summary 'IsPresent' flag if any artifact was found.
     $report.IsPresent = ($report.ServiceIsPresent -or $report.InstallPathExists -or $report.UpgradeCodeExists)
 
-    # If nothing was found, we are done. Return the minimal report.
     if (-not $report.IsPresent) {
+        Write-Host "Conclusion: No SentinelOne artifacts found on this endpoint."
         return [PSCustomObject]$report
     }
 
+    Write-Host "SentinelOne artifacts were found. Proceeding with detailed health checks."
+    
     # If S1 is present in any form, proceed to gather the rest of the details.
-    $report.ServicesAllRunning = Test-S1ServicesAllRunning
-    $report.AgentVersion = Get-S1AgentVersion
+    $report.ServicesAllRunning = Test-C9S1ServicesAllRunning -Verbose:$false
+    $report.AgentVersion = Get-C9S1AgentVersion -Verbose:$false
 
-    $ctlPath = Get-S1CtlPath
+    $ctlPath = Get-C9S1CtlPath -Verbose:$false
     if ($ctlPath) {
-        $report.AgentId = Get-S1AgentId -CtlPath $ctlPath
-        $report.CtlStatusOutput = Get-S1CtlStatus -CtlPath $ctlPath
+        $report.AgentId = Get-C9S1AgentId -CtlPath $ctlPath -Verbose:$false
+        $report.CtlStatusOutput = Get-C9S1CtlStatus -CtlPath $ctlPath -Verbose:$false
+    }
+    else {
+        Write-Warning "SentinelCtl.exe not found. Agent ID and Ctl Status will be null."
     }
 
+    Write-Host "--- Local Health Report Generation Complete ---"
     return [PSCustomObject]$report
 }
 
-#endregion Master Function
+function Get-C9S1AgentIdFromEndpoint {
+    <#
+    .SYNOPSIS
+        Dynamically finds the SentinelCtl.exe path and uses it to retrieve the agent's UUID.
+    .DESCRIPTION
+        This function uses the proven logic from the original detection script (T20250701) to
+        reliably locate the running agent's executable. It then derives the installation
+        directory from that path to construct the correct path to SentinelCtl.exe, even if
+        it's inside a versioned folder. Finally, it executes the utility to get the agent ID.
+        This is the definitive, endpoint-local method for identifying the agent.
+    .OUTPUTS
+        [string] The agent UUID, or $null if not found.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+
+    try {
+        # Use Get-CimInstance to find the service, as proven reliable on 07/01/25.
+        $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='SentinelAgent'" -ErrorAction SilentlyContinue
+        if (-not $service) { return $null }
+
+        # Get the path to the running executable.
+        $exePath = $service.PathName.Trim('"')
+        if (-not (Test-Path -LiteralPath $exePath)) { return $null }
+
+        # This is the key insight: derive the installation directory from the running .exe.
+        $installDir = Split-Path -Path $exePath -Parent
+        $ctlPath = Join-Path -Path $installDir -ChildPath "SentinelCtl.exe"
+
+        if (-not (Test-Path -LiteralPath $ctlPath)) { return $null }
+
+        # Execute SentinelCtl.exe to get the agent ID, as proven reliable on 07/01/25.
+        $agentId = (& $ctlPath agent_id 2>&1).Trim()
+
+        # Validate the output to ensure it's a real ID and not an error message.
+        if ($agentId -and $agentId -notlike "*error*") {
+            # This is the ONLY thing that should write to the success stream.
+            return $agentId
+        }
+    }
+    catch {
+        # On any unexpected/terminating error, return null to signal "not found".
+        Write-Warning "An error occurred while getting agent ID from endpoint: $($_.Exception.Message)"
+        return $null
+    }
+    return $null
+}
+
+Export-ModuleMember -Function *

@@ -2,7 +2,6 @@
 
 # Helper functions
 
-# Moved to C9SentinelOneMeata.psm1
 function Get-C9S1LocalAgentId {
     [CmdletBinding()]
     param()
@@ -39,7 +38,7 @@ function Get-C9S1LocalAgentId {
         return $null
     }
 }
- # Moved to C9SentinelOneMeta.psm1
+
 function Test-C9S1LocalUpgradeAuthorization {
     [CmdletBinding()]
     param(
@@ -80,7 +79,6 @@ function Test-C9S1LocalUpgradeAuthorization {
 
 # Exported Functions
 
-# Moved to C9SentinelOneCloud.psm1
 function Connect-C9S1API {
     [CmdletBinding()]
     param(
@@ -116,7 +114,6 @@ function Connect-C9S1API {
     }
 }
 
-# Moved to C9SentinelOneCloud.psm1
 function Invoke-C9S1RestMethod {
     [CmdletBinding()]
     param(
@@ -179,7 +176,6 @@ function Invoke-C9S1RestMethod {
     }
 }
 
-# Moved to C9SentinelOneCloud.psm1
 function Get-C9S1AuthHeader {
     [CmdletBinding()]
     param()
@@ -197,7 +193,6 @@ function Get-C9S1AuthHeader {
     return $AuthHeader
 }
 
-# Moved to C9SentinelOneCloud.psm1
 function Get-C9S1Site {
     [CmdletBinding()]
     param(
@@ -258,7 +253,6 @@ function Get-C9S1Site {
     #org: }
 }
 
-# Moved to C9SentinelOneCloud.psm1
 function Get-C9S1Agent {
     [CmdletBinding()]
     param(
@@ -325,7 +319,6 @@ function Get-C9S1Agent {
     # org: }
 }
 
-# Moved to C9SentinelOneCloud.psm1
 function Get-C9S1AvailablePackages {
     <#
     .SYNOPSIS
@@ -371,7 +364,6 @@ function Get-C9S1AvailablePackages {
     return $GroupedVersions
 }
 
-# Moved to C9SentinelOneCloud.psm1
 function Get-C9S1AgentPassphrase {
     <#
     .SYNOPSIS
@@ -413,7 +405,6 @@ function Get-C9S1AgentPassphrase {
     }
 }
 
-# Moved to C9SentinelOneMeta.psm1
 function Test-S1InstallPreFlight {
     [CmdletBinding()]
     [OutputType([PSCustomObject])]

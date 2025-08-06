@@ -57,7 +57,7 @@ Write-Host "[$ScriptName] Performing comprehensive pre-install checks..."
 try {
     Write-Host "[$ScriptName] Checking MSI mutex availability..."       
     Test-MsiExecMutex
-    Write-Host "[$ScriptName] MSI mutex is available."
+    Write-Host "[$ScriptName] [PASS] MSI mutex is available."
     
     # Use our new decision logic for ClearPending scenario
     Write-Host "[$ScriptName] [DECISION] Evaluating pending reboot clearance using comprehensive decision logic..."
@@ -194,10 +194,22 @@ try {
 } finally {
     if ($null -ne $tempInstallDir) {
         Write-Host "[$ScriptName] Performing final cleanup of temporary directory: $tempInstallDir"
-        Invoke-ImmyCommand {
-            if (Test-Path $using:tempInstallDir) {
-                Remove-Item -Path $using:tempInstallDir -Recurse -Force -ErrorAction SilentlyContinue
+        try {
+            Invoke-ImmyCommand -Computer $Computer -ScriptBlock {
+                if (Test-Path $using:tempInstallDir) {
+                    Write-Host "[$using:ScriptName] Removing temporary directory: $using:tempInstallDir"
+                    Remove-Item -Path $using:tempInstallDir -Recurse -Force -ErrorAction SilentlyContinue
+                    
+                    # Verify cleanup
+                    if (Test-Path $using:tempInstallDir) {
+                        Write-Warning "[$using:ScriptName] Directory still exists after cleanup attempt"
+                    } else {
+                        Write-Host "[$using:ScriptName] Temporary directory cleanup completed successfully"
+                    }
+                }
             }
+        } catch {
+            Write-Warning "[$ScriptName] Non-critical error during cleanup: $($_.Exception.Message)"
         }
     }
 }

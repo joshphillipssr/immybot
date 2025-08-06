@@ -10,6 +10,8 @@ param(
     [string]$rebootPreference
 )
 
+$tempUninstallDir = $null
+
 # $VerbosePreference = 'Continue'
 # $ProgressPreference = 'SilentlyContinue'
 
@@ -141,15 +143,18 @@ try {
     if ($siteToken) {
         Write-Host "[$ScriptName] Site token found. Proceeding to cleaner..."
         $exitCodeFile = "C:\Windows\Temp\s1_uninstall_exit_code.txt"
-        Invoke-ImmyCommand -Timeout 1200 -ScriptBlock {
+    
+        # Generate temp directory name and store it for cleanup
+        $tempUninstallDir = "C:\Temp\S1_Uninstall_$(Get-Date -f yyyyMMdd-hhmmss)"
+    
+        Invoke-ImmyCommand -Computer $Computer -Timeout 1200 -ScriptBlock {
             try {
                 if (Test-Path $using:exitCodeFile) {
                     Remove-Item $using:exitCodeFile -Force
                 }
                 $source = (Get-Item "C:\ProgramData\ImmyBot\S1\Installer\SentinelOneInstaller*.exe").FullName
-                $tempDir = "C:\Temp\S1_Uninstall_$(Get-Date -f yyyyMMdd-hhmmss)"
-                New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-                $destination = Join-Path -Path $tempDir -ChildPath (Split-Path $source -Leaf)
+                New-Item -ItemType Directory -Path $using:tempUninstallDir -Force | Out-Null
+                $destination = Join-Path -Path $using:tempUninstallDir -ChildPath (Split-Path $source -Leaf)
                 Copy-Item -Path $source -Destination $destination -Force
                 $cleanerArgs = "-c -q -t `"$($using:siteToken)`""
                 $InstallProcess = Start-Process -NoNewWindow -PassThru -Wait -FilePath $destination -ArgumentList $cleanerArgs
@@ -159,7 +164,8 @@ try {
                 throw
             }
         }
-        $cleanerExitCode = Invoke-ImmyCommand {
+    
+        $cleanerExitCode = Invoke-ImmyCommand -Computer $Computer -ScriptBlock {
             if (Test-Path $using:exitCodeFile) {
                 Get-Content $using:exitCodeFile
             } else {
@@ -208,4 +214,26 @@ try {
 } catch {
     $errorMessage = "[$ScriptName] The Uninstallation failed with a fatal error: $($_.Exception.Message)"
     throw $errorMessage
+} finally {
+    # Cleanup temporary uninstall directory if it was created
+    if ($null -ne $tempUninstallDir) {
+        Write-Host "[$ScriptName] Performing final cleanup of temporary uninstall directory: $tempUninstallDir"
+        try {
+            Invoke-ImmyCommand -Computer $Computer -ScriptBlock {
+                if (Test-Path $using:tempUninstallDir) {
+                    Write-Host "[$using:ScriptName] Removing temporary uninstall directory: $using:tempUninstallDir"
+                    Remove-Item -Path $using:tempUninstallDir -Recurse -Force -ErrorAction SilentlyContinue
+                    
+                    # Verify cleanup
+                    if (Test-Path $using:tempUninstallDir) {
+                        Write-Warning "[$using:ScriptName] Uninstall directory still exists after cleanup attempt"
+                    } else {
+                        Write-Host "[$using:ScriptName] Temporary uninstall directory cleanup completed successfully"
+                    }
+                }
+            }
+        } catch {
+            Write-Warning "[$ScriptName] Non-critical error during uninstall cleanup: $($_.Exception.Message)"
+        }
+    }
 }
