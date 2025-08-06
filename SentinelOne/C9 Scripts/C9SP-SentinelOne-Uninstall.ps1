@@ -1,5 +1,5 @@
 # =================================================================================
-# Name:     C9SP-SentinelOne-Uninstall Script (Refactored)
+# Name:     C9SP-SentinelOne-Uninstall Script
 # Author:   Josh Phillips
 # Contact:  josh@c9cg.com
 # Docs:     https://immydocs.c9cg.com
@@ -24,7 +24,8 @@ $s1AgentState = Get-C9SentinelOneInfo
 $rebootWillBeRequired = ($null -ne $s1AgentState.Service)
 
 if ($rebootWillBeRequired) {
-    Write-Host "[$ScriptName] [CONDITION] Active S1 services exist. A post-uninstall reboot is mandatory and will be required."
+    Write-Host "[$ScriptName] Active S1 Windows Services exist. A post-uninstall reboot is mandatory and will be required..."
+    Write-Host "[$ScriptName] Will now perform a comprehensive pre-action safety evaluation to determine if ..."
     
     # Use our new decision logic for PreAction scenario
     Write-Host "[$ScriptName] [DECISION] Evaluating pre-action safety using comprehensive decision logic..."
@@ -34,14 +35,14 @@ if ($rebootWillBeRequired) {
         throw "[$ScriptName] HALT: Cannot proceed with S1 uninstall. Reason: $($preActionDecision.Reason)"
     }
     
-    Write-Host "[$ScriptName] [PASS] Pre-action evaluation complete: $($preActionDecision.Reason)"
+    Write-Host -ForegroundColor Green "[$ScriptName] Pre-action evaluation complete: $($preActionDecision.Reason)"
     if ($preActionDecision.OverrideApplied) {
         Write-Host "[$ScriptName] [OVERRIDE] Platform policy override was applied for critical S1 operation."
     }
 } else {
     Write-Host "[$ScriptName] [CONDITION] No S1 services detected. Proceeding with non-invasive remnant cleanup."
 }
-Write-Host "[$ScriptName] Phase 1 Complete. Proceeding to main playbook."
+Write-Host "[$ScriptName] Phase 1 Complete. Proceeding to uninstall playbook."
 
 # --- Phase 2: Main Uninstallation Playbook ---
 try {
@@ -51,9 +52,10 @@ try {
     Invoke-ImmyCommand {
         $triggerFilePath = Join-Path -Path $using:triggerFileDir -ChildPath $using:triggerFileName
         if (Test-Path $triggerFilePath) {
-            Write-Host "[$using:ScriptName] Found uninstall trigger file. Renaming it to break loop."
+            Write-Host "[$using:ScriptName] Found uninstall trigger file. Renaming it to break loop..."
             try {
                 Rename-Item -Path $triggerFilePath -NewName $using:newFileName -ErrorAction Stop
+                Write-Host "[$using:ScriptName] Trigger file renamed successfully. Continuing with uninstallation..."
             } catch {
                 Write-Warning "[$using:ScriptName] Could not rename trigger file."
             }
@@ -82,10 +84,10 @@ try {
     }
 
     # pre-flight MsiExec check
-    Write-Host "[$ScriptName] Running inline pre-flight checks..."
+    Write-Host "[$ScriptName] Running inline pre-uninstallation checks..."
     try {
         Test-MsiExecMutex -ErrorAction Stop
-        Write-Host "[$ScriptName] [PASS] MSI Mutex is available."
+        Write-Host "[$ScriptName] MSI Mutex is available. Safe to proceed with uninstallation..."
     } catch {
         throw "[$ScriptName] Pre-flight check failed: MSI installation in progress."
     }

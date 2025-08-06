@@ -76,6 +76,7 @@ function Invoke-C9EndpointCommand {
         
             The current implementation intentionally bypasses the -ArgumentList parameter. Instead, it uses the PowerShell `$using:` scope modifier (e.g., `$using:FilePath`) to directly and reliably inject variables from the parent Metascript into the endpoint's System context. This is the most direct, explicit, and robust method for passing data across the ImmyBot context boundary and aligns with the project's established architectural best practices.
     #>
+    
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true, Position = 0)]
@@ -140,8 +141,12 @@ function Invoke-C9EndpointCommand {
             $stderr = $p.StandardError.ReadToEnd()
             return [PSCustomObject]@{ ExitCode = $p.ExitCode; StandardOutput = $stdout; StandardError = $stderr }
         }
-        catch { throw "[$using:ScriptName - $using:FunctionName] Failed to start or monitor process '$($using:FilePath)'. Error: $_" }
-        finally { if ($p) { $p.Dispose() } }
+        catch {
+            throw "[$using:ScriptName - $using:FunctionName] Failed to start or monitor process '$($using:FilePath)'. Error: $_"
+        }
+        finally {
+            if ($p) { $p.Dispose() }
+        }
 
     } # Note: No -ArgumentList is used here.
 
@@ -192,13 +197,13 @@ function Test-C9IsUserLoggedIn {
     try {
         $explorerUsers = @(Get-LoggedOnUser -Computer $Computer -ErrorAction SilentlyContinue)
         if ($null -ne $explorerUsers -and $explorerUsers.Count -gt 0) {
-            Write-Host "[$ScriptName - $FunctionName] [DIAGNOSTIC] Get-LoggedOnUser (explorer.exe check) found user(s): $($explorerUsers -join ', ')." -ForegroundColor Yellow
+            Write-Host "[$ScriptName - $FunctionName] Get-LoggedOnUser (explorer.exe check) found user(s): $($explorerUsers -join ', ')." -ForegroundColor Yellow
         } else {
-            Write-Host "[$ScriptName - $FunctionName] [DIAGNOSTIC] Get-LoggedOnUser (explorer.exe check) found no users." -ForegroundColor Yellow
+            Write-Host "[$ScriptName - $FunctionName] Get-LoggedOnUser (explorer.exe check) found no users." -ForegroundColor Yellow
         }
     }
     catch {
-        Write-Warning "[$ScriptName - $FunctionName] [DIAGNOSTIC] Get-LoggedOnUser (explorer.exe check) failed: $_"
+        Write-Warning "[$ScriptName - $FunctionName] Get-LoggedOnUser (explorer.exe check) failed: $_"
     }
 
     # --- DIAGNOSTIC STEP 2: Run the more reliable quser.exe check ---
@@ -230,10 +235,24 @@ function Test-C9IsUserLoggedIn {
         $isActiveSessionPresent = $quserResult.StandardOutput -match 'Active'
 
         if ($isActiveSessionPresent) {
-            # For better logging, let's find which user is active
-            $activeUserLine = ($quserResult.StandardOutput | Select-String 'Active').ToString()
-            $activeUserName = ($activeUserLine.Trim() -split '\s+')[0]
-            Write-Host "[$ScriptName - $FunctionName] 'quser.exe' confirms an ACTIVE session exists for user: $activeUserName. Returning `$true."
+            # For better logging, let's find which user is active - CORRECTED PARSING
+            $outputLines = $quserResult.StandardOutput -split '(?:\r\n|\r|\n)'
+            $activeUserLine = $null
+    
+            # Skip the header line and find the line with "Active" 
+            for ($i = 1; $i -lt $outputLines.Length; $i++) {
+                if ($outputLines[$i] -match '\bActive\b') {
+                    $activeUserLine = $outputLines[$i]
+                    break
+                }
+            }
+    
+            if ($activeUserLine) {
+                $activeUserName = ($activeUserLine.Trim() -split '\s+')[0]
+                Write-Host "[$ScriptName - $FunctionName] 'quser.exe' confirms an ACTIVE session exists for user: $activeUserName. Returning `$true."
+            } else {
+                Write-Host "[$ScriptName - $FunctionName] 'quser.exe' found Active session but could not parse username. Returning `$true."
+            }
             return $true
         } else {
             Write-Host "[$ScriptName - $FunctionName] 'quser.exe' confirms no ACTIVE sessions were found (sessions may be disconnected). Returning `$false."
@@ -244,8 +263,8 @@ function Test-C9IsUserLoggedIn {
         Write-Warning "[$ScriptName - $FunctionName] An unexpected error occurred while running 'quser.exe'. Assuming user is present for safety. $_"
         return $true # Fail safe
     }
-}
-
+}   
+    
 function Test-C9SystemPrerequisites {
     <#
     .SYNOPSIS
@@ -444,9 +463,9 @@ function Test-C9EndpointSafeToReboot {
         Write-Host "[$ScriptName - $FunctionName] Gathering granular endpoint status for $($Computer.Name)..."
 
         $idleTime = Get-C9UserIdleTime -Computer $Computer -ErrorAction Stop
-        $lockStatus = Get-ComputerLockedStatus -Computer $Computer -ErrorAction Stop
+        $computerLockStatus = Get-C9ComputerLockedStatus -Computer $Computer -ErrorAction Stop
         $result.IdleTimeMinutes = [int]$idleTime.TotalMinutes
-        $result.LockStatus = $lockStatus
+        $result.LockStatus = $computerLockStatus.LockStatus
         
         Write-Host "[$ScriptName - $FunctionName] Endpoint idle for $($result.IdleTimeMinutes) minute(s). Lock status: $($result.LockStatus)."
        
@@ -617,7 +636,7 @@ function Get-C9UserIdleTime {
     )
     $FunctionName = "Get-C9UserIdleTime"
 
-    Write-Host "[$ScriptName - $FunctionName] Getting idle time"
+    Write-Host "[$ScriptName - $FunctionName] Getting idle time via Invoke-ImmyCommand script block..."
     $idleTimeSpan = try {
         # Execute in 'User' context to get accurate idle time from the interactive session.
         Invoke-ImmyCommand -Computer $Computer -Context User -ErrorAction Stop -ScriptBlock {
@@ -682,11 +701,27 @@ function Get-C9RebootPolicyContext {
         The ImmyBot computer object. Defaults to the computer in the current context via (Get-ImmyComputer).
         Included for consistency with other module functions, though policy variables are context-based.
     
+    .PARAMETER RebootPreference
+        Optional. Explicitly pass the RebootPreference value if auto-detection fails.
+    
+    .PARAMETER PromptTimeoutAction
+        Optional. Explicitly pass the PromptTimeoutAction value if auto-detection fails.
+    
+    .PARAMETER AutoConsentToReboots
+        Optional. Explicitly pass the AutoConsentToReboots value if auto-detection fails.
+    
+    .PARAMETER PromptTimeout
+        Optional. Explicitly pass the PromptTimeout value if auto-detection fails.
+    
     .EXAMPLE
         $policyContext = Get-C9RebootPolicyContext
         if ($policyContext.RebootPreference -eq "Suppress") {
             Write-Host "Platform policy is set to suppress reboots"
         }
+    
+    .EXAMPLE
+        # Explicitly pass variables if auto-detection fails
+        $policyContext = Get-C9RebootPolicyContext -RebootPreference $rebootPreference -PromptTimeoutAction $promptTimeoutAction
     
     .OUTPUTS
         PSCustomObject with the following properties:
@@ -705,7 +740,19 @@ function Get-C9RebootPolicyContext {
     [OutputType([PSCustomObject])]
     param(
         [Parameter(Mandatory = $false)]
-        $Computer = (Get-ImmyComputer)
+        $Computer = (Get-ImmyComputer),
+        
+        [Parameter(Mandatory = $false)]
+        [string]$RebootPreference,
+        
+        [Parameter(Mandatory = $false)]
+        [string]$PromptTimeoutAction,
+        
+        [Parameter(Mandatory = $false)]
+        [bool]$AutoConsentToReboots,
+        
+        [Parameter(Mandatory = $false)]
+        [timespan]$PromptTimeout
     )
 
     $FunctionName = "Get-C9RebootPolicyContext"
@@ -726,70 +773,97 @@ function Get-C9RebootPolicyContext {
     }
 
     try {
-        # Check for RebootPreference variable
-        $rebootPrefVar = Get-Variable -Name 'rebootPreference' -ErrorAction SilentlyContinue
+    # Check for RebootPreference variable
+    if (-not [string]::IsNullOrWhiteSpace($RebootPreference)) {
+        $result.RebootPreference = $RebootPreference
+        $result.IsRebootPreferenceAvailable = $true
+        $result.PolicySource = "Parameter"
+        Write-Host "[$ScriptName - $FunctionName] Using passed RebootPreference parameter: '$RebootPreference'"
+    } else {
+        $rebootPrefVar = Get-C9VariableFromAnyScope -VariableName 'rebootPreference' -IncludeCommonVariations
         if ($null -ne $rebootPrefVar) {
             $result.RebootPreference = $rebootPrefVar.Value
             $result.IsRebootPreferenceAvailable = $true
             $result.PolicySource = "Platform Variables"
             Write-Host "[$ScriptName - $FunctionName] Found RebootPreference: '$($rebootPrefVar.Value)'"
         } else {
-            Write-Host "[$ScriptName - $FunctionName] RebootPreference variable not found in current context"
+            Write-Host "[$ScriptName - $FunctionName] RebootPreference variable not found in any accessible scope"
         }
+    }
 
-        # Check for PromptTimeoutAction variable
-        $promptTimeoutActionVar = Get-Variable -Name 'promptTimeoutAction' -ErrorAction SilentlyContinue
+    # Check for PromptTimeoutAction variable
+    if (-not [string]::IsNullOrWhiteSpace($PromptTimeoutAction)) {
+        $result.PromptTimeoutAction = $PromptTimeoutAction
+        $result.IsPromptTimeoutActionAvailable = $true
+        Write-Host "[$ScriptName - $FunctionName] Using passed PromptTimeoutAction parameter: '$PromptTimeoutAction'"
+    } else {
+        $promptTimeoutActionVar = Get-C9VariableFromAnyScope -VariableName 'promptTimeoutAction' -IncludeCommonVariations
         if ($null -ne $promptTimeoutActionVar) {
             $result.PromptTimeoutAction = $promptTimeoutActionVar.Value
             $result.IsPromptTimeoutActionAvailable = $true
             Write-Host "[$ScriptName - $FunctionName] Found PromptTimeoutAction: '$($promptTimeoutActionVar.Value)'"
         } else {
-            Write-Host "[$ScriptName - $FunctionName] PromptTimeoutAction variable not found in current context"
+            Write-Host "[$ScriptName - $FunctionName] PromptTimeoutAction variable not found in any accessible scope"
         }
+    }
 
-        # Check for AutoConsentToReboots variable
-        $autoConsentVar = Get-Variable -Name 'autoConsentToReboots' -ErrorAction SilentlyContinue
+    # Check for AutoConsentToReboots variable
+    if ($PSBoundParameters.ContainsKey('AutoConsentToReboots')) {
+        $result.AutoConsentToReboots = $AutoConsentToReboots
+        $result.IsAutoConsentToRebootsAvailable = $true
+        Write-Host "[$ScriptName - $FunctionName] Using passed AutoConsentToReboots parameter: '$AutoConsentToReboots'"
+    } else {
+        $autoConsentVar = Get-C9VariableFromAnyScope -VariableName 'autoConsentToReboots' -IncludeCommonVariations
         if ($null -ne $autoConsentVar) {
             $result.AutoConsentToReboots = $autoConsentVar.Value
             $result.IsAutoConsentToRebootsAvailable = $true
             Write-Host "[$ScriptName - $FunctionName] Found AutoConsentToReboots: '$($autoConsentVar.Value)'"
         } else {
-            Write-Host "[$ScriptName - $FunctionName] AutoConsentToReboots variable not found in current context"
+            Write-Host "[$ScriptName - $FunctionName] AutoConsentToReboots variable not found in any accessible scope"
         }
+    }
 
-        # Check for PromptTimeout variable
-        $promptTimeoutVar = Get-Variable -Name 'promptTimeout' -ErrorAction SilentlyContinue
+    # Check for PromptTimeout variable
+    if ($PSBoundParameters.ContainsKey('PromptTimeout')) {
+        $result.PromptTimeout = $PromptTimeout
+        $result.IsPromptTimeoutAvailable = $true
+        Write-Host "[$ScriptName - $FunctionName] Using passed PromptTimeout parameter: '$PromptTimeout'"
+    } else {
+        $promptTimeoutVar = Get-C9VariableFromAnyScope -VariableName 'promptTimeout' -IncludeCommonVariations
         if ($null -ne $promptTimeoutVar) {
             $result.PromptTimeout = $promptTimeoutVar.Value
             $result.IsPromptTimeoutAvailable = $true
             Write-Host "[$ScriptName - $FunctionName] Found PromptTimeout: '$($promptTimeoutVar.Value)'"
         } else {
-            Write-Host "[$ScriptName - $FunctionName] PromptTimeout variable not found in current context"
+            Write-Host "[$ScriptName - $FunctionName] PromptTimeout variable not found in any accessible scope"
         }
+    }
 
-        # Update PolicySource if any variables were found
-        $availableCount = @(
-            $result.IsRebootPreferenceAvailable,
-            $result.IsPromptTimeoutActionAvailable,
-            $result.IsAutoConsentToRebootsAvailable,
-            $result.IsPromptTimeoutAvailable
-        ) | Where-Object { $_ -eq $true } | Measure-Object | Select-Object -ExpandProperty Count
+    # Update PolicySource if any variables were found - ConstrainedLanguage safe version
+    $availableCount = 0
+    if ($result.IsRebootPreferenceAvailable) { $availableCount++ }
+    if ($result.IsPromptTimeoutActionAvailable) { $availableCount++ }
+    if ($result.IsAutoConsentToRebootsAvailable) { $availableCount++ }
+    if ($result.IsPromptTimeoutAvailable) { $availableCount++ }
 
-        if ($availableCount -gt 0) {
-            Write-Host "[$ScriptName - $FunctionName] Found $availableCount platform reboot policy variable(s)"
-        } else {
-            Write-Host "[$ScriptName - $FunctionName] No platform reboot policy variables found in current context"
+    if ($availableCount -gt 0) {
+        Write-Host "[$ScriptName - $FunctionName] Found $availableCount platform reboot policy variable(s)"
+        if ($result.PolicySource -eq "None") {
+            $result.PolicySource = "Platform Variables"
         }
+    } else {
+        Write-Host "[$ScriptName - $FunctionName] No platform reboot policy variables found in current context"
+    }
 
     } catch {
         Write-Error "[$ScriptName - $FunctionName] Error gathering platform reboot policy context: $($_.Exception.Message)"
         $result.PolicySource = "Error"
     }
 
-    Write-Host "[$ScriptName - $FunctionName] Platform reboot policy context gathering complete"
+        Write-Host "[$ScriptName - $FunctionName] Platform reboot policy context gathering complete"
     
-    return New-Object -TypeName PSObject -Property $result
-}
+        return New-Object -TypeName PSObject -Property $result
+    }
 
 function Get-C9UserActivityStatus {
     <#
@@ -850,11 +924,11 @@ function Get-C9UserActivityStatus {
 
     try {
         # Step 1: Check if user is logged in (using existing function)
-        Write-Host "[$ScriptName - $FunctionName] Checking user login status..."
+        Write-Host "[$ScriptName - $FunctionName] Checking user login status via Test-C9IsUserLoggedIn..."
         $result.IsUserLoggedIn = Test-C9IsUserLoggedIn -Computer $Computer
         
         # Step 2: Get idle time (using existing function)
-        Write-Host "[$ScriptName - $FunctionName] Getting user idle time..."
+        Write-Host "[$ScriptName - $FunctionName] Checking user idle time via Get-C9UserIdleTime..."
         $idleTimeSpan = Get-C9UserIdleTime -Computer $Computer
         $result.IdleTimeSpan = $idleTimeSpan
         
@@ -866,16 +940,18 @@ function Get-C9UserActivityStatus {
         }
 
         # Step 3: Get lock status (using existing ImmyBot function)
-        Write-Host "[$ScriptName - $FunctionName] Checking lock status..."
+        Write-Host "[$ScriptName - $FunctionName] Checking computer lock status via Get-C9ComputerLockedStatus..."
         try {
-            $result.LockStatus = Get-ComputerLockedStatus -Computer $Computer -ErrorAction Stop
+            $computerLockStatus = Get-C9ComputerLockedStatus -Computer $Computer -ErrorAction Stop
+            $result.LockStatus = $computerLockStatus.LockStatus
+            Write-Host -ForegroundColor Green "[$ScriptName - $FunctionName] Current lock status: $($result.LockStatus)"
         } catch {
             Write-Warning "[$ScriptName - $FunctionName] Could not determine lock status: $_"
             $result.LockStatus = "Error"
         }
 
         # Step 4: Get logged on users (using existing ImmyBot function for completeness)
-        Write-Host "[$ScriptName - $FunctionName] Getting logged on users list..."
+        Write-Host "[$ScriptName - $FunctionName] Getting logged on users list via Get-LoggedOnUser..."
         try {
             $loggedOnUsers = @(Get-LoggedOnUser -Computer $Computer -ErrorAction SilentlyContinue)
             if ($null -ne $loggedOnUsers -and $loggedOnUsers.Count -gt 0) {
@@ -964,7 +1040,7 @@ function Get-C9SystemRebootRequirements {
 
     $FunctionName = "Get-C9SystemRebootRequirements"
     
-    Write-Host "[$ScriptName - $FunctionName] Gathering comprehensive system reboot requirements..."
+    Write-Host "[$ScriptName - $FunctionName] Gathering system reboot requirements..."
 
     # Initialize result object
     $result = [ordered]@{
@@ -1190,28 +1266,28 @@ function Test-C9RebootDecision {
     # Initialize result object
     $result = [ordered]@{
         ShouldProceed               = $false
-        ShouldReboot               = $false
-        ShouldPromptUser           = $false
-        UserInteractionMode        = "None"
-        Reason                     = "Initial state"
-        PlatformPolicy             = "Unknown"
-        UserActivitySummary        = "Unknown"
-        RebootRequirementsSummary  = "Unknown"
-        OverrideApplied           = $false
-        RecommendedAction         = "None"
-        WhatIfMode                = $WhatIf.IsPresent
-        RawData                   = @{}
+        ShouldReboot                = $false
+        ShouldPromptUser            = $false
+        UserInteractionMode         = "None"
+        Reason                      = "Initial state"
+        PlatformPolicy              = "Unknown"
+        UserActivitySummary         = "Unknown"
+        RebootRequirementsSummary   = "Unknown"
+        OverrideApplied             = $false
+        RecommendedAction            = "None"
+        WhatIfMode                  = $WhatIf.IsPresent
+        RawData                     = @{}
     }
 
     try {
         # Step 1: Gather all foundational data
-        Write-Host "[$ScriptName - $FunctionName] Gathering platform policy context..."
+        Write-Host "[$ScriptName - $FunctionName] Initiating reboot policy data gathering via Get-C9RebootPolicyContext..."
         $policyContext = Get-C9RebootPolicyContext -Computer $Computer
         
-        Write-Host "[$ScriptName - $FunctionName] Gathering user activity status..."
+        Write-Host "[$ScriptName - $FunctionName] Intiating user activity status data gathering via Get-C9UserActivityStatus..."
         $userActivity = Get-C9UserActivityStatus -Computer $Computer
         
-        Write-Host "[$ScriptName - $FunctionName] Gathering system reboot requirements..."
+        Write-Host "[$ScriptName - $FunctionName] Gathering system reboot requirements via Get-C9SystemRebootRequirements..."
         $rebootRequirements = Get-C9SystemRebootRequirements -Computer $Computer
 
         # Store raw data for advanced use cases
@@ -1230,9 +1306,10 @@ function Test-C9RebootDecision {
             "No pending reboot detected"
         }
 
-        Write-Host "[$ScriptName - $FunctionName] Platform Policy: $($result.PlatformPolicy)"
-        Write-Host "[$ScriptName - $FunctionName] User Activity: $($result.UserActivitySummary)"
-        Write-Host "[$ScriptName - $FunctionName] Reboot Requirements: $($result.RebootRequirementsSummary)"
+        Write-Host "[$ScriptName - $FunctionName] Current platform reboot policy: $($result.PlatformPolicy)"
+        Write-Host "[$ScriptName - $FunctionName] Current user activity: $($result.UserActivitySummary)"
+        Write-Host "[$ScriptName - $FunctionName] Current reboot requirements: $($result.RebootRequirementsSummary)"
+        Write-Host "[$ScriptName - $FunctionName] Proceeding to decision logic for scenario: $Scenario"
 
         # Step 2: Apply scenario-specific decision logic
         switch ($Scenario) {
@@ -1576,6 +1653,374 @@ function Test-UserActivityForReboot {
     return $result
 }
 
+function Get-C9ComputerLockedStatus {
+    <#
+    .SYNOPSIS
+        Gets detailed computer lock status information by combining quser.exe results with reliable lock detection.
+    
+    .DESCRIPTION
+        This function provides comprehensive computer lock status information by first using the reliable
+        quser.exe command to identify console users, then determining the lock status using the
+        proven LogonUI.exe process detection method via tasklist.exe.
+        
+        This is a foundational "Get" function that provides clean data collection for downstream
+        decision logic functions.
+    
+    .PARAMETER Computer
+        The ImmyBot computer object. Defaults to the computer in the current context via (Get-ImmyComputer).
+    
+    .PARAMETER IncludeUserContextCheck
+        Switch to include additional user context lock detection for verification.
+        This provides more accurate results but requires user context execution.
+    
+    .EXAMPLE
+        $lockStatus = Get-C9ComputerLockedStatus
+        if ($lockStatus.HasActiveConsoleUser -and $lockStatus.IsLocked) {
+            Write-Host "Console user is logged in but screen is locked"
+        }
+    
+    .EXAMPLE
+        $lockStatus = Get-C9ComputerLockedStatus -IncludeUserContextCheck
+        # Includes both system and user context detection methods
+    
+    .OUTPUTS
+        PSCustomObject with the following properties:
+        - HasActiveConsoleUser: Boolean indicating if there's an active console user
+        - ConsoleUserName: Username of the active console user (or $null if none)
+        - SessionState: State from quser (Active/Disc/Listen/etc.)
+        - IsLocked: Boolean indicating if the workstation is locked
+        - LockStatus: Detailed lock status (Locked/Unlocked/LoggedOut)
+        - SystemContextLockStatus: Result from LogonUI.exe detection
+        - UserContextLockStatus: Result from user context detection (if requested)
+        - AllSessions: Array of all user sessions from quser
+        - ActiveSessions: Array of only Active sessions
+        - DisconnectedSessions: Array of only disconnected sessions
+        - SessionCount: Total number of user sessions
+        - DataSource: Source of the detection data
+        - RawQuserOutput: Full output from quser.exe for diagnostics
+        - LogonUIRunning: Boolean indicating if LogonUI.exe process is running
+        - DetectionMethod: Method used for lock detection
+    #>
+    
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param(
+        [Parameter(Mandatory = $false)]
+        $Computer = (Get-ImmyComputer),
+        
+        [Parameter(Mandatory = $false)]
+        [switch]$IncludeUserContextCheck
+    )
+
+    $FunctionName = "Get-C9ComputerLockedStatus"
+    
+    Write-Host "[$ScriptName - $FunctionName] Getting comprehensive computer lock status..."
+
+    # Initialize result object
+    $result = [ordered]@{
+        HasActiveConsoleUser    = $false
+        ConsoleUserName         = $null
+        SessionState            = "Unknown"
+        IsLocked                = $false
+        LockStatus              = "Unknown"
+        SystemContextLockStatus = "Unknown"
+        UserContextLockStatus   = "Unknown"
+        AllSessions             = @()
+        ActiveSessions          = @()
+        DisconnectedSessions    = @()
+        SessionCount            = 0
+        DataSource              = "quser.exe + tasklist.exe LogonUI detection"
+        RawQuserOutput          = ""
+        LogonUIRunning          = $false
+        DetectionMethod         = "System Context (tasklist)"
+    }
+
+    try {
+        # Step 1: Use quser.exe to get reliable session information
+        Write-Host "[$ScriptName - $FunctionName] Executing quser.exe to get session information..."
+        
+        $quserResult = Invoke-C9EndpointCommand -FilePath "quser.exe" -ArgumentList @() -Computer $Computer
+
+        $result.RawQuserOutput = $quserResult.StandardOutput
+
+        if ($quserResult.ExitCode -ne 0) {
+            # quser.exe exits with code 1 if no users are logged on
+            if (($quserResult.StandardOutput.Contains("no User exists for")) -or 
+                ($quserResult.StandardError.Contains("No User exists for"))) {
+                Write-Host "[$ScriptName - $FunctionName] quser.exe confirms no users are logged on"
+                $result.LockStatus = "LoggedOut"
+                $result.SystemContextLockStatus = "LoggedOut"
+                return New-Object -TypeName PSObject -Property $result
+            } else {
+                Write-Warning "[$ScriptName - $FunctionName] quser.exe failed unexpectedly (Exit Code: $($quserResult.ExitCode))"
+                $result.DataSource = "Error - quser failed"
+                $result.LockStatus = "Unknown"
+                return New-Object -TypeName PSObject -Property $result
+            }
+        }
+
+        # Step 2: Parse quser output to extract session information
+        Write-Host "[$ScriptName - $FunctionName] Parsing quser.exe output..."
+        
+        $sessions = @()
+        $lines = $quserResult.StandardOutput -split "`r`n|`n" | Where-Object { $_.Trim() -ne "" }
+        
+        # Skip the header line and process each session line
+        for ($i = 1; $i -lt $lines.Count; $i++) {
+            $line = $lines[$i].Trim()
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            
+            # Parse the quser output format
+            $parts = $line -split '\s+', 7
+            
+            if ($parts.Count -ge 4) {
+                # Create session object using Constrained Mode compatible approach
+                $sessionProperties = [ordered]@{
+                    UserName    = $parts[0]
+                    SessionName = if ($parts[1] -match '^\d+$') { "console" } else { $parts[1] }
+                    SessionId   = if ($parts[1] -match '^\d+$') { $parts[1] } else { $parts[2] }
+                    State       = if ($parts[1] -match '^\d+$') { $parts[2] } else { $parts[3] }
+                    IdleTime    = if ($parts[1] -match '^\d+$') { $parts[3] } else { $parts[4] }
+                    LogonTime   = if ($parts[1] -match '^\d+$') { ($parts[4..6] -join ' ') } else { ($parts[5..6] -join ' ') }
+                }
+                
+                $session = New-Object -TypeName PSObject -Property $sessionProperties
+                $sessions += $session
+                
+                # Check if this is an active console session
+                if ($session.State -eq "Active" -and ($session.SessionName -eq "console" -or $session.SessionId -eq "0" -or $session.SessionId -eq "1" -or $session.SessionId -eq "2")) {
+                    $result.HasActiveConsoleUser = $true
+                    $result.ConsoleUserName = $session.UserName
+                    $result.SessionState = $session.State
+                    Write-Host "[$ScriptName - $FunctionName] Found active console user: $($session.UserName)"
+                }
+            }
+        }
+        
+        # Categorize sessions
+        $result.AllSessions = $sessions
+        $result.ActiveSessions = @($sessions | Where-Object { $_.State -eq "Active" })
+        $result.DisconnectedSessions = @($sessions | Where-Object { $_.State -eq "Disc" })
+        $result.SessionCount = $sessions.Count
+        
+        Write-Host "[$ScriptName - $FunctionName] Found $($result.SessionCount) total sessions ($($result.ActiveSessions.Count) active, $($result.DisconnectedSessions.Count) disconnected)"
+
+        # Step 3: System context lock detection using proven tasklist.exe method
+        Write-Host "[$ScriptName - $FunctionName] Checking LogonUI.exe process for lock status using tasklist.exe..."
+        
+        $tasklistResult = Invoke-C9EndpointCommand -FilePath "tasklist.exe" -ArgumentList @("/FI", "IMAGENAME eq LogonUI.exe", "/FO", "CSV") -Computer $Computer
+        
+        if ($tasklistResult.ExitCode -eq 0) {
+            # Check if LogonUI.exe is in the output
+            $result.LogonUIRunning = $tasklistResult.StandardOutput -match "LogonUI.exe"
+            
+            Write-Host "[$ScriptName - $FunctionName] tasklist.exe LogonUI detection result: $($result.LogonUIRunning)"
+            
+            if ($result.HasActiveConsoleUser) {
+                if ($result.LogonUIRunning) {
+                    # User is logged in but LogonUI is running = locked screen
+                    $result.SystemContextLockStatus = "Locked"
+                } else {
+                    # User is logged in and LogonUI not running = unlocked screen
+                    $result.SystemContextLockStatus = "Unlocked"
+                }
+            } else {
+                # No user logged in - LogonUI state indicates logon screen vs no users
+                $result.SystemContextLockStatus = "LoggedOut"
+            }
+        } else {
+            Write-Warning "[$ScriptName - $FunctionName] Could not check LogonUI.exe process status via tasklist.exe"
+            $result.SystemContextLockStatus = "Error"
+        }
+
+        # Step 4: Optional user context lock detection for verification
+        if ($IncludeUserContextCheck.IsPresent -and $result.HasActiveConsoleUser) {
+            Write-Host "[$ScriptName - $FunctionName] Performing additional user context lock verification..."
+            $result.DetectionMethod = "System (tasklist) + User Context"
+            $result.DataSource = "quser.exe + tasklist.exe + User Context Detection"
+            
+            try {
+                $userContextResult = Invoke-ImmyCommand -Computer $Computer -Context User -ErrorAction Stop -Timeout 30 -ScriptBlock {
+                    try {
+                        # User context lock detection using input desktop accessibility
+                        Add-Type -TypeDefinition @"
+                        using System;
+                        using System.Runtime.InteropServices;
+                        
+                        public static class UserLockDetection {
+                            [DllImport("user32.dll", SetLastError = true)]
+                            public static extern IntPtr OpenInputDesktop(uint dwFlags, bool fInherit, uint dwDesiredAccess);
+                            
+                            [DllImport("user32.dll", SetLastError = true)]
+                            public static extern bool CloseDesktop(IntPtr hDesktop);
+                            
+                            public static bool IsWorkstationLocked() {
+                                IntPtr hDesktop = OpenInputDesktop(0, false, 0x0001);
+                                if (hDesktop == IntPtr.Zero) {
+                                    return true; // Cannot access input desktop = locked
+                                } else {
+                                    CloseDesktop(hDesktop);
+                                    return false; // Can access input desktop = unlocked
+                                }
+                            }
+                        }
+"@
+                        if ([UserLockDetection]::IsWorkstationLocked()) {
+                            return "Locked"
+                        } else {
+                            return "Unlocked"
+                        }
+                    } catch {
+                        return "Error: $_"
+                    }
+                }
+                
+                $result.UserContextLockStatus = $userContextResult
+                Write-Host "[$ScriptName - $FunctionName] User context lock detection result: $userContextResult"
+                
+            } catch {
+                Write-Warning "[$ScriptName - $FunctionName] User context lock detection failed: $_"
+                $result.UserContextLockStatus = "Error"
+            }
+        } else {
+            if (-not $result.HasActiveConsoleUser) {
+                $result.UserContextLockStatus = "No User"
+            } else {
+                $result.UserContextLockStatus = "Not Requested"
+            }
+        }
+
+        # Step 5: Determine final lock status
+        Write-Host "[$ScriptName - $FunctionName] Determining final lock status..."
+        
+        if (-not $result.HasActiveConsoleUser) {
+            $result.LockStatus = "LoggedOut"
+            $result.IsLocked = $false
+        } else {
+            # User is logged in - use system context detection as primary method
+            if ($result.SystemContextLockStatus -eq "Locked") {
+                $result.LockStatus = "Locked"
+                $result.IsLocked = $true
+            } elseif ($result.SystemContextLockStatus -eq "Unlocked") {
+                $result.LockStatus = "Unlocked"
+                $result.IsLocked = $false
+            } else {
+                # System context failed - fallback to user context if available
+                if ($result.UserContextLockStatus -eq "Locked") {
+                    $result.LockStatus = "Locked"
+                    $result.IsLocked = $true
+                } elseif ($result.UserContextLockStatus -eq "Unlocked") {
+                    $result.LockStatus = "Unlocked"
+                    $result.IsLocked = $false
+                } else {
+                    $result.LockStatus = "Unknown"
+                    $result.IsLocked = $false
+                }
+            }
+        }
+
+        Write-Host "[$ScriptName - $FunctionName] Final lock status: $($result.LockStatus) (System: $($result.SystemContextLockStatus), User: $($result.UserContextLockStatus))"
+
+    } catch {
+        Write-Error "[$ScriptName - $FunctionName] Error gathering computer lock status: $($_.Exception.Message)"
+        $result.DataSource = "Error"
+        $result.LockStatus = "Error"
+    }
+
+    Write-Host "[$ScriptName - $FunctionName] computer lock status gathering complete"
+    
+    return New-Object -TypeName PSObject -Property $result
+}
+
+function Get-C9VariableFromAnyScope {
+    <#
+    .SYNOPSIS
+        Gets a PowerShell variable from any accessible scope with ConstrainedLanguage mode compatibility.
+    
+    .DESCRIPTION
+        This function searches for a PowerShell variable across multiple scopes and with multiple
+        name variations. It's designed to work in ConstrainedLanguage mode by avoiding string
+        methods that are restricted in that environment.
+    
+    .PARAMETER VariableName
+        The name of the variable to search for.
+    
+    .PARAMETER IncludeCommonVariations
+        Switch to include common reboot-related variable name variations in the search.
+    
+    .OUTPUTS
+        Returns the first variable object found, or $null if not found.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VariableName,
+        
+        [Parameter(Mandatory = $false)]
+        [switch]$IncludeCommonVariations
+    )
+
+    $FunctionName = "Get-C9VariableFromAnyScope"
+
+    # Create variable name variations using ConstrainedLanguage-safe methods
+    $variableNames = @()
+    $variableNames += $VariableName
+    
+    # Add lowercase version using -replace instead of .ToLower()
+    $lowerName = $VariableName -replace '[A-Z]', { $_.Value.ToLowerInvariant() }
+    if ($lowerName -ne $VariableName) {
+        $variableNames += $lowerName
+    }
+    
+    # Add proper case version (first letter uppercase, rest lowercase)
+    if ($VariableName.Length -gt 0) {
+        $firstChar = $VariableName[0].ToString().ToUpperInvariant()
+        $restChars = ""
+        if ($VariableName.Length -gt 1) {
+            for ($i = 1; $i -lt $VariableName.Length; $i++) {
+                $restChars += $VariableName[$i].ToString().ToLowerInvariant()
+            }
+        }
+        $properCaseName = $firstChar + $restChars
+        if ($properCaseName -ne $VariableName -and $properCaseName -ne $lowerName) {
+            $variableNames += $properCaseName
+        }
+    }
+    
+    # Add common reboot-related variations if requested
+    if ($IncludeCommonVariations.IsPresent) {
+        $commonVariations = @(
+            "rebootPreference", "RebootPreference",
+            "promptTimeoutAction", "PromptTimeoutAction", 
+            "autoConsentToReboots", "AutoConsentToReboots",
+            "promptTimeout", "PromptTimeout"
+        )
+        foreach ($variation in $commonVariations) {
+            if ($variation -notin $variableNames) {
+                $variableNames += $variation
+            }
+        }
+    }
+    
+    # Try multiple scopes
+    $scopes = @('Local', 'Script', 'Global', '1', '2', '3')
+    
+    foreach ($varName in $variableNames) {
+        foreach ($scope in $scopes) {
+            try {
+                $var = Get-Variable -Name $varName -Scope $scope -ErrorAction SilentlyContinue
+                if ($null -ne $var -and -not [string]::IsNullOrWhiteSpace($var.Value)) {
+                    Write-Host "[$ScriptName - $FunctionName] Found $varName in scope $scope with value: '$($var.Value)'"
+                    return $var
+                }
+            } catch {
+                # Continue trying other scopes
+            }
+        }
+    }
+    return $null
+}
+
 Export-ModuleMember -Function @(
     'Invoke-C9EndpointCommand',
     'Test-C9IsUserLoggedIn',
@@ -1590,5 +2035,7 @@ Export-ModuleMember -Function @(
     'Invoke-PostActionDecisionLogic',
     'Invoke-ClearPendingDecisionLogic',
     'Test-UserActivityForReboot',
+    'Get-C9ComputerLockedStatus',
+    'Get-C9VariableFromAnyScope',
     'Get-C9SystemRebootRequirements'
 )
