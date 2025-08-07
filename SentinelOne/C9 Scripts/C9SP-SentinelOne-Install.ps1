@@ -1,5 +1,5 @@
 # =================================================================================
-# Name:     C9SP-SentinelOne-Install Script (Refactored)
+# Name:     C9SP-SentinelOne-Install Script
 # Author:   Josh Phillips
 # Contact:  josh@c9cg.com
 # Docs:     https://immydocs.c9cg.com

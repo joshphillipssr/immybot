@@ -1,5 +1,9 @@
-# SentinelOne Cloud Module
-# These are API Helper functions primarily used for SentinelOne Cloud Script Context API interactions.
+# =================================================================================
+# Name:     C9SentinelOneCloud Module
+# Author:   Josh Phillips
+# Contact:  josh@c9cg.com
+# Docs:     https://immydocs.c9cg.com
+# =================================================================================
 
 function Connect-C9S1API {
     [CmdletBinding()]

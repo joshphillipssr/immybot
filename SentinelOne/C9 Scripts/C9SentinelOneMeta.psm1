@@ -1,12 +1,9 @@
-# SentinelOne Meta Module
-# These functions are primarily used for SentinelOne Metascript to System Context interactions.
-# ==============================================================
-# Some key ImmyBot Metascript functions to facilitate Metascript to System Context communication are:
-#
-# Invoke-ImmyCommand - The default wrapper to run commands from the Metascript context on the endpoint System Context.
-# Start-ProcessWithLogTail and Start-ProcessWithLogTailContext - Built to solve the inherent of Start-Process and piping log output back to the Metascript context.
-# Restart-ComputerAndWait
-# 
+# =================================================================================
+# Name:     C9SentinelOneMeta Module
+# Author:   Josh Phillips
+# Contact:  josh@c9cg.com
+# Docs:     https://immydocs.c9cg.com
+# =================================================================================
 
 function Get-C9SentinelOneInfo {
 <#
