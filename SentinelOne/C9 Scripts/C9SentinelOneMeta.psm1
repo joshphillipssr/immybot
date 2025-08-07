@@ -1,35 +1,38 @@
-# =================================================================================
-# Name:     C9SentinelOneMeta Module
-# Author:   Josh Phillips
-# Contact:  josh@c9cg.com
-# Docs:     https://immydocs.c9cg.com
-# =================================================================================
+# SentinelOne Meta Module
+# These functions are primarily used for SentinelOne Metascript to System Context interactions.
+# ==============================================================
+# Some key ImmyBot Metascript functions to facilitate Metascript to System Context communication are:
+#
+# Invoke-ImmyCommand - The default wrapper to run commands from the Metascript context on the endpoint System Context.
+# Start-ProcessWithLogTail and Start-ProcessWithLogTailContext - Built to solve the inherent of Start-Process and piping log output back to the Metascript context.
+# Restart-ComputerAndWait
+# 
 
 function Get-C9SentinelOneInfo {
-<#
-.SYNOPSIS
-    Gathers comprehensive information about the local SentinelOne agent installation.
-.DESCRIPTION
-    A Metascript function that queries the endpoint in the SYSTEM context to find the SentinelOne agent.
-    It returns a rich PSCustomObject containing details like version, paths, and service status.
-    If the agent is not found, the function returns $null.
-.OUTPUTS
-    A PSCustomObject containing agent information, or $null if the agent is not found.
-    The object includes:
-    - IsInstalled ($true)
-    - Version (string)
-    - Service (CimInstance object)
-    - InstallPath (string)
-    - AgentExePath (string)
-    - SentinelCtlPath (string)
-.EXAMPLE
-    $s1Info = Get-C9SentinelOneInfo
-    if ($s1Info) {
-        Write-Host "SentinelOne Version $($s1Info.Version) found at $($s1Info.InstallPath)"
-    } else {
-        Write-Error "SentinelOne agent not found."
-    }
-#>
+    <#
+    .SYNOPSIS
+        Gathers comprehensive information about the local SentinelOne agent installation.
+    .DESCRIPTION
+        A Metascript function that queries the endpoint in the SYSTEM context to find the SentinelOne agent.
+        It returns a rich PSCustomObject containing details like version, paths, and service status.
+        If the agent is not found, the function returns $null.
+    .OUTPUTS
+        A PSCustomObject containing agent information, or $null if the agent is not found.
+        The object includes:
+        - IsInstalled ($true)
+        - Version (string)
+        - Service (CimInstance object)
+        - InstallPath (string)
+        - AgentExePath (string)
+        - SentinelCtlPath (string)
+    .EXAMPLE
+        $s1Info = Get-C9SentinelOneInfo
+        if ($s1Info) {
+            Write-Host "SentinelOne Version $($s1Info.Version) found at $($s1Info.InstallPath)"
+        } else {
+            Write-Error "SentinelOne agent not found."
+        }
+    #>
     [CmdletBinding()]
     param()
 
@@ -251,84 +254,78 @@ function Get-C9S1EndpointData {
 function Get-C9SentinelOneStatus {
     <#
     .SYNOPSIS
-        A Metascript function that retrieves the detailed operational status of the SentinelOne agent from an endpoint.
+        (Refactored) A Metascript function that retrieves and parses the output of 'sentinelctl.exe status'.
     .DESCRIPTION
-        This function is designed to be called from a Metascript context. It uses Invoke-ImmyCommand
-        to locate the SentinelCtl.exe utility on the endpoint, execute the 'status' command, and
-        then parse the text output into a structured PowerShell object for easy consumption.
-        The parsing logic is designed to handle both key-value pairs and simple status lines.
-    .RETURNS
-        [PSCustomObject] A PowerShell object containing key-value pairs from the 'sentinelctl status'
-        output. Simple status lines are collected into a 'Status_Messages' array property.
-        $null if the agent is not found or if the status command fails.
-    .EXAMPLE
-        $agentStatus = Get-C9SentinelOneStatus
-        if ($agentStatus) {
-            Write-Host "Self-Protection: $($agentStatus.Self-Protection_status)"
-            $agentStatus.Status_Messages | ForEach-Object { Write-Host "Status Message: $_" }
-        }
+        This function locates sentinelctl.exe via Get-C9SentinelOneInfo and executes the 'status' command
+        using the robust Invoke-C9EndpointCommand wrapper. It parses the key-value output into a
+        structured object for easy analysis.
+    .OUTPUTS
+        A PSCustomObject containing parsed status data, or $null on failure.
     #>
-
     [CmdletBinding()]
     param()
 
     $FunctionName = "Get-C9SentinelOneStatus"
+    Write-Host "[$ScriptName - $FunctionName] Getting agent status via sentinelctl.exe..."
 
-    Write-Host "[$ScriptName - $FunctionName] Attempting to get detailed S1 agent status from the endpoint..."
+    $s1Info = Get-C9SentinelOneInfo
+    if (-not $s1Info -or -not $s1Info.SentinelCtlPath) {
+        Write-Warning "[$ScriptName - $FunctionName] Cannot run 'status' command; SentinelCtl.exe path is unknown."
+        return $null
+    }
+
+    # =========================================================================
+    # --- BEGIN CORRECTED SECTION (Fix #1: $using scope) ---
+    # =========================================================================
+    # Assign the complex property to a simple variable first.
+    $sentinelCtlPath = $s1Info.SentinelCtlPath
+
+    # Now, use the simple variable with the $using: modifier. This is safe.
+    if (-not (Invoke-ImmyCommand -ScriptBlock { Test-Path $using:sentinelCtlPath })) {
+        Write-Warning "[$ScriptName - $FunctionName] SentinelCtl.exe not found at path: $($sentinelCtlPath)"
+        return $null
+    }
+    # =========================================================================
+    # --- END CORRECTED SECTION ---
+    # =========================================================================
+
+    # Use the simple variable for the command execution as well.
+    $ctlResult = Invoke-C9EndpointCommand -FilePath $sentinelCtlPath -ArgumentList "status"
     
-    $statusObject = Invoke-ImmyCommand -ScriptBlock {
-        # This entire script block runs on the endpoint as SYSTEM in FullLanguage mode.
-        try {
-            # Step 1: Find the 'SentinelAgent' service to get the authoritative path.
-            $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='SentinelAgent'" -ErrorAction SilentlyContinue
-            if (-not $service) { return $null }
+    if ($ctlResult.ExitCode -ne 0) {
+        Write-Warning "[$ScriptName - $FunctionName] 'sentinelctl.exe status' failed with Exit Code: $($ctlResult.ExitCode)."
+        # We still return the object, the exit code is valuable data.
+    }
+    
+    $outputLines = $ctlResult.StandardOutput -split '(?:\r\n|\r|\n)'
+    $statusData = [ordered]@{
+        # Add the raw execution results for deep diagnostics
+        ExitCode       = $ctlResult.ExitCode
+        RawOutput      = $ctlResult.StandardOutput
+        RawError       = $ctlResult.StandardError
+        # Add a property to explicitly state if the command ran successfully
+        IsHealthy      = ($ctlResult.ExitCode -eq 0)
+    }
 
-            # Step 2: Build the full path to SentinelCtl.exe.
-            $installDir = Split-Path -Path ($service.PathName.Trim('"')) -Parent
-            $sentinelCtlPath = Join-Path -Path $installDir -ChildPath 'SentinelCtl.exe'
-            if (-not (Test-Path -LiteralPath $sentinelCtlPath)) { return $null }
-
-            # Step 3: Execute 'sentinelctl status' and capture its output.
-            $statusOutput = & $sentinelCtlPath status
-
-            # Step 4: [REVISED] Intelligent parsing for both line types.
-            $parsedStatus = [ordered]@{
-                # Initialize an array to hold non-key-value status lines.
-                Status_Messages = @()
-            }
-            foreach ($line in $statusOutput) {
-                # Skip any blank lines
-                if ([string]::IsNullOrWhiteSpace($line)) { continue }
-
-                # Check if the line is a key-value pair.
-                if ($line -like '*:*') {
-                    $parts = $line.Split(':', 2)
-                    $key = $parts[0].Trim().Replace(' ', '_').Replace(':', '')
-                    $value = $parts[1].Trim()
-                    $parsedStatus[$key] = $value
-                }
-                # If it's not a key-value pair, treat it as a general status message.
-                else {
-                    $parsedStatus['Status_Messages'] += $line.Trim()
-                }
-            }
-            
-            # SUCCESS: Return the clean, structured object to the Metascript.
-            return [PSCustomObject]$parsedStatus
-
-        } catch {
-            Write-Warning "An unexpected error occurred during endpoint status check: $_"
-            return $null
+    # =========================================================================
+    # --- BEGIN CORRECTED SECTION (Fix #2: Parsing Logic) ---
+    # =========================================================================
+    foreach ($line in $outputLines) {
+        # We only care about lines that are key:value pairs.
+        if ($line -like '*:*') {
+            $key, $value = $line.Split(':', 2).Trim()
+            # Make property name PowerShell-friendly by replacing spaces with underscores.
+            $propName = $key.Replace(' ', '_') 
+            $statusData[$propName] = $value
         }
+        # We no longer have an 'elseif' block. Lines without a colon are ignored.
     }
+    # =========================================================================
+    # --- END CORRECTED SECTION ---
+    # =========================================================================
 
-    if ($statusObject) {
-        Write-Host "[$ScriptName - $FunctionName] Successfully retrieved agent status object."
-    } else {
-        Write-Host "[$ScriptName - $FunctionName] Could not retrieve a valid status object from the endpoint."
-    }
-
-    return $statusObject
+    Write-Host "[$ScriptName - $FunctionName] Successfully parsed sentinelctl status."
+    return New-Object -TypeName PSObject -Property $statusData
 }
 
 function Test-C9S1LocalUpgradeAuthorization {
@@ -435,18 +432,18 @@ function Test-S1InstallPreFlight {
 }
 
 function Resolve-InstallerAvailable {
-<#
-.SYNOPSIS
-    Ensures a file is available on the endpoint, downloading it if necessary, with authentication support.
-.PARAMETER DownloadUrl
-    The public URL from which to download the file.
-.PARAMETER FileName
-    The name of the file (e.g., "MyTool.exe") to be saved on the endpoint.
-.PARAMETER AuthHeader
-    A hashtable containing the authentication headers required for the download (e.g., @{ 'Authorization' = "Bearer ..." }).
-.OUTPUTS
-    String. The full path to the staged file on the endpoint.
-#>
+    <#
+    .SYNOPSIS
+        Ensures a file is available on the endpoint, downloading it if necessary, with authentication support.
+    .PARAMETER DownloadUrl
+        The public URL from which to download the file.
+    .PARAMETER FileName
+        The name of the file (e.g., "MyTool.exe") to be saved on the endpoint.
+    .PARAMETER AuthHeader
+        A hashtable containing the authentication headers required for the download (e.g., @{ 'Authorization' = "Bearer ..." }).
+    .OUTPUTS
+        String. The full path to the staged file on the endpoint.
+    #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -489,7 +486,7 @@ function Resolve-InstallerAvailable {
 }
 
 function Set-C9SentinelOneUnprotect {
-<#
+    <#
     .SYNOPSIS
         Disables the SentinelOne agent's self-protection using a passphrase.
     .DESCRIPTION
@@ -501,7 +498,7 @@ function Set-C9SentinelOneUnprotect {
         The agent-specific passphrase required to disable protection. This string can contain spaces.
     .OUTPUTS
         Boolean. Returns $true on success, throws a terminating error on failure.
-#>
+    #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -554,15 +551,164 @@ function Set-C9SentinelOneProtect {
     Invoke-C9EndpointCommand -FilePath $s1Info.SentinelCtlPath -ArgumentList "protect"
 }
 
-Export-ModuleMember -Function @(
-    'Get-C9SentinelOneInfo',
-    'Get-C9S1LocalAgentId',
-    'Get-C9SentinelOneVersion',
-    'Get-C9S1EndpointData',
-    'Get-C9SentinelOneStatus',
-    'Test-C9S1LocalUpgradeAuthorization',
-    'Test-S1InstallPreFlight',
-    'Resolve-InstallerAvailable',
-    'Set-C9SentinelOneUnprotect',
-    'Set-C9SentinelOneProtect'
-)
+function Get-C9S1ServiceState {
+    <#
+    .SYNOPSIS
+        (Specialist) Checks the existence and status of the four core SentinelOne services.
+    .OUTPUTS
+        A PSCustomObject with boolean properties for the existence and running state of each service.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $FunctionName = "Get-C9S1ServiceState"
+    Write-Host "[$ScriptName - $FunctionName] Checking state of all S1-related Windows services..."
+
+    $serviceState = Invoke-ImmyCommand -ScriptBlock {
+        $serviceNames = @(
+            "SentinelAgent",
+            "SentinelHelperService",
+            "SentinelStaticEngine",
+            "LogProcessorService"
+        )
+        $report = [ordered]@{}
+        foreach ($name in $serviceNames) {
+            $service = Get-Service -Name $name -ErrorAction SilentlyContinue
+            $report["Exists_$($name)"] = ($null -ne $service)
+            $report["IsRunning_$($name)"] = ($null -ne $service -and $service.Status -eq 'Running')
+        }
+        return [PSCustomObject]$report
+    }
+
+    Write-Host "[$ScriptName - $FunctionName] Service state check complete."
+    return $serviceState
+}
+
+function Get-C9S1InstallDirectoryState {
+    <#
+    .SYNOPSIS
+        (Specialist) Checks the health of the SentinelOne installation directory.
+    .DESCRIPTION
+        This function verifies the existence of the installation folder and critical files within it,
+        such as SentinelAgent.exe and SentinelCtl.exe.
+    .OUTPUTS
+        A PSCustomObject detailing the state of the installation directory.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$InstallPath
+    )
+
+    $FunctionName = "Get-C9S1InstallDirectoryState"
+    Write-Host "[$ScriptName - $FunctionName] Checking health of install directory: '$InstallPath'..."
+
+    # =========================================================================
+    # --- BEGIN CORRECTED SECTION ---
+    # =========================================================================
+    # We now call Invoke-ImmyCommand WITHOUT -ArgumentList and WITHOUT a param() block inside.
+    # We will use the $using: scope modifier, which is the proven, reliable pattern.
+    $dirState = Invoke-ImmyCommand -ScriptBlock {
+        # The 'param($path)' line has been removed.
+
+        # We now access the Metascript's $InstallPath variable directly using $using:
+        $agentExe = Join-Path -Path $using:InstallPath -ChildPath "SentinelAgent.exe"
+        $ctlExe = Join-Path -Path $using:InstallPath -ChildPath "SentinelCtl.exe"
+
+        $report = [ordered]@{
+            DirectoryExists      = Test-Path -Path $using:InstallPath -PathType Container
+            SentinelAgentExists  = Test-Path -Path $agentExe -PathType Leaf
+            SentinelCtlExists    = Test-Path -Path $ctlExe -PathType Leaf
+        }
+        # Define "healthy" as the directory and both key executables existing.
+        $report['IsHealthy'] = ($report.DirectoryExists -and $report.SentinelAgentExists -and $report.SentinelCtlExists)
+
+        return [PSCustomObject]$report
+    } # Note: The -ArgumentList parameter has been removed.
+    # =========================================================================
+    # --- END CORRECTED SECTION ---
+    # =========================================================================
+
+    Write-Host "[$ScriptName - $FunctionName] Directory health check complete. IsHealthy: $($dirState.IsHealthy)."
+    return $dirState
+}
+
+function Get-C9S1ComprehensiveStatus {
+    <#
+    .SYNOPSIS
+        (Orchestrator) Gathers a complete, multi-point status report for the SentinelOne agent.
+    .DESCRIPTION
+        This is the new master "Get" function. It orchestrates calls to multiple specialist functions
+        to collect information from WMI, the file system, and sentinelctl.exe. It assembles all
+        data into a single, rich object for high-level decision making.
+    .OUTPUTS
+        A single, rich PSCustomObject containing a full health and status report of the agent.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $FunctionName = "Get-C9S1ComprehensiveStatus"
+    Write-Host "================================================================="
+    Write-Host "[$ScriptName - $FunctionName] BEGINNING COMPREHENSIVE S1 STATUS CHECK"
+    Write-Host "================================================================="
+
+    # Initialize the final report object with a predictable structure.
+    $report = [ordered]@{
+        # Top-level summary flags
+        IsPresent           = $false
+        IsConsideredHealthy = $false
+        # Data from different sources
+        BaseInfo            = $null # From Get-C9SentinelOneInfo
+        ServiceState        = $null # From Get-C9S1ServiceState
+        DirectoryState      = $null # From Get-C9S1InstallDirectoryState
+        SentinelCtlStatus   = $null # From Get-C9SentinelOneStatus
+        # Cross-validated versions
+        VersionFromService  = $null
+        VersionFromCtl      = $null
+    }
+
+    # 1. Get base info (service, paths, version). This is our starting point.
+    $report.BaseInfo = Get-C9SentinelOneInfo
+    $report.VersionFromService = $report.BaseInfo.Version
+
+    # If BaseInfo is null, the agent isn't installed in a detectable way. We can stop.
+    if (-not $report.BaseInfo) {
+        Write-Warning "[$ScriptName - $FunctionName] Primary check (Get-C9SentinelOneInfo) found no agent. Status check cannot proceed further."
+        $report.IsPresent = $false
+        return New-Object -TypeName PSObject -Property $report
+    }
+
+    $report.IsPresent = $true
+    Write-Host "[$ScriptName - $FunctionName] Agent is present. Version (from Service): $($report.VersionFromService). Continuing checks..."
+
+    # 2. Get the state of all four services.
+    $report.ServiceState = Get-C9S1ServiceState
+
+    # 3. Get the state of the installation directory.
+    $report.DirectoryState = Get-C9S1InstallDirectoryState -InstallPath $report.BaseInfo.InstallPath
+    
+    # 4. Get the detailed status from sentinelctl.exe.
+    $report.SentinelCtlStatus = Get-C9SentinelOneStatus
+    
+    # 5. Extract the version from the sentinelctl output for easy comparison.
+    if ($report.SentinelCtlStatus -and $report.SentinelCtlStatus.Monitor_Build_id) {
+        $report.VersionFromCtl = ($report.SentinelCtlStatus.Monitor_Build_id -split '\+')[0].Trim()
+    }
+    
+    # 6. Define the final "IsConsideredHealthy" summary status based on our findings.
+    # This is where we codify our definition of a healthy agent.
+    $isHealthy = ($report.BaseInfo -and 
+                  $report.ServiceState.IsRunning_SentinelAgent -and 
+                  $report.DirectoryState.IsHealthy -and
+                  $report.SentinelCtlStatus.IsHealthy -and
+                  ($report.VersionFromService -eq $report.VersionFromCtl))
+
+    $report.IsConsideredHealthy = $isHealthy
+
+    Write-Host "[$ScriptName - $FunctionName] FINAL HEALTH STATUS: $($report.IsConsideredHealthy)"
+    Write-Host "================================================================="
+
+    return New-Object -TypeName PSObject -Property $report
+}
+
+Export-ModuleMember -Function *

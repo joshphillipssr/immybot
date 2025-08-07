@@ -18,35 +18,24 @@ if (Test-FilePath -Path $forceNullFlagFile) {
 
 Import-Module "C9MetascriptHelpers"
 
-# --- Pre-Flight System Checks with New Decision Logic ---
+# --- Pre-Flight System Checks (This logic is excellent and remains unchanged) ---
 Write-Host "[$ScriptName] Starting pre-flight system checks..."
-
 try {
-    Test-MsiExecMutex
+    Test-C9MsiExecMutex
     Write-Host "[$ScriptName] [PASS] MSI Mutex is available."
 } catch {
     throw "[$ScriptName] Pre-flight check failed: A conflicting MSI installation is in progress."
 }
-
-# Use our new decision logic for ClearPending scenario
 Write-Host "[$ScriptName] [DECISION] Evaluating pending reboot clearance using comprehensive decision logic..."
 $clearPendingDecision = Test-C9RebootDecision -Scenario ClearPending -OverrideSuppression $true -MaxUserIdleMinutes 120
-
 if ($clearPendingDecision.ShouldReboot) {
     Write-Host "[$ScriptName] [ACTION] Clearing pending reboot as recommended: $($clearPendingDecision.Reason)"
-    
-    if ($clearPendingDecision.OverrideApplied) {
-        Write-Host "[$ScriptName] [OVERRIDE] Platform policy override applied for critical S1 operation."
-    }
-    
+    if ($clearPendingDecision.OverrideApplied) { Write-Host "[$ScriptName] [OVERRIDE] Platform policy override applied for critical S1 operation." }
     try {
-        # Delegate to native function - it will handle user interaction based on platform policy
         Write-Host "[$ScriptName] Initiating pre-flight reboot (timeout: 15 minutes)..."
         Restart-ComputerAndWait -TimeoutDuration (New-TimeSpan -Minutes 15)
         Write-Host "[$ScriptName] SUCCESS: The pre-flight reboot completed."
-    } catch {
-        throw "[$ScriptName] FATAL: Pre-flight reboot was required, but the self-healing attempt was unsuccessful. Error: $_"
-    }
+    } catch { throw "[$ScriptName] FATAL: Pre-flight reboot was required, but the self-healing attempt was unsuccessful. Error: $_" }
 } elseif (-not $clearPendingDecision.ShouldProceed) {
     throw "[$ScriptName] HALT: Cannot clear pending reboot safely. Reason: $($clearPendingDecision.Reason)"
 } else {
@@ -54,81 +43,53 @@ if ($clearPendingDecision.ShouldReboot) {
 }
 
 Write-Host "[$ScriptName] Pre-flight checks complete. Proceeding to S1 health validation..."
+# --- End of Unchanged Pre-Flight Checks ---
 
-# --- S1 Health Check Logic (Unchanged) ---
+
+# =====================================================================================
+# --- NEW: Comprehensive Health Check using our new Orchestrator Function ---
+# =====================================================================================
 try {
-    Write-Host "[$ScriptName] Starting Three-Point Health Check..."
+    Write-Host "[$ScriptName] Starting new Comprehensive Health Check..."
 
+    # Import the modules containing our new functions
     Import-Module "C9SentinelOneMeta" -ErrorAction Stop
-    Import-Module "C9MetascriptHelpers" -ErrorAction Stop
+    Import-Module "C9MetascriptHelpers" -ErrorAction Stop # For the formatter
 
-    # --- CHECK 1: GET AGENT SERVICE VERSION ---
-    Write-Host "[$ScriptName] [1/3] Checking version from agent service..."
-    $serviceInfo = Get-C9SentinelOneInfo
-    $serviceVersion = $serviceInfo.Version
-    if ([string]::IsNullOrWhiteSpace($serviceVersion)) {
-        Write-Warning "[$ScriptName] [FAIL] Could not determine a version from the SentinelAgent service."
-        return $false
-    }
-    Write-Host "[$ScriptName] [PASS] Service reports version: $serviceVersion"
-
-    # =========================================================================
-    # --- CHECK 2: GET SENTINELCTL VERSION (Corrected Parsing) ---
-    # =========================================================================
-    Write-Host "[$ScriptName] [2/3] Checking version from sentinelctl.exe..."
+    # --- THE GET PHASE ---
+    # This is the single call that gets all the data we need.
+    $s1Status = Get-C9S1ComprehensiveStatus
     
-    if (-not $serviceInfo.InstallPath) {
-        Write-Warning "[$ScriptName] [FAIL] Cannot find agent installation path to run sentinelctl.exe."
+    # Log the detailed findings for excellent diagnostics.
+    # The formatter function will create a clean table from the rich, nested object.
+    $formattedStatus = Format-C9ObjectForDisplay -InputObject $s1Status | Format-Table -AutoSize | Out-String
+    Write-Host "----------------- COMPREHENSIVE S1 STATUS -----------------"
+    Write-Host -ForegroundColor Cyan $formattedStatus
+    Write-Host "---------------------------------------------------------"
+
+    # --- THE TEST PHASE ---
+    # The decision logic is now beautifully simple. We just check the summary booleans.
+
+    # First, handle the case where the agent isn't present at all.
+    # A non-present agent is not "healthy" in the context of this test script. It should fail.
+    if (-not $s1Status.IsPresent) {
+        Write-Warning "[$ScriptName] [FAIL] Agent is not present on the system."
         return $false
     }
-    $sentinelctlPath = Join-Path -Path $serviceInfo.InstallPath -ChildPath "sentinelctl.exe"
-    $sentinelctlResult = Invoke-C9EndpointCommand -FilePath $sentinelctlPath -ArgumentList "status"
     
-    if ($sentinelctlResult.ExitCode -ne 0) {
-        Write-Warning "[$ScriptName] [FAIL] sentinelctl.exe status command failed with exit code: $($sentinelctlResult.ExitCode)."
+    # Now, check the master health status flag. This single property encapsulates all our checks.
+    if ($s1Status.IsConsideredHealthy) {
+        Write-Host -ForegroundColor Green "[$ScriptName] [PASS] Agent is considered healthy based on comprehensive checks."
+        return $true
+    }
+    else {
+        Write-Warning "[$ScriptName] [FAIL] Agent is present but is considered UNHEALTHY."
+        # The detailed table logged above will show exactly which check failed.
         return $false
     }
-
-    # --- BEGIN CORRECTED SECTION ---
-    $sentinelctlVersion = $null
-    
-    # First, split the single multi-line output string into an array of lines.
-    # This ensures Select-String behaves predictably.
-    $outputLines = $sentinelctlResult.StandardOutput -split '(?:\r\n|\r|\n)'
-
-    # Now, find the correct line from the array.
-    $versionLine = $outputLines | Select-String -Pattern 'Monitor Build id:'
-    
-    if ($versionLine) {
-        # Line is "Monitor Build id: 24.2.3.471+a12f..."
-        $versionStringWithExtras = ($versionLine.ToString() -split ':', 2)[1].Trim()
-        $sentinelctlVersion = ($versionStringWithExtras -split '\+', 2)[0].Trim()
-    }
-    # --- END CORRECTED SECTION ---
-
-    if ([string]::IsNullOrWhiteSpace($sentinelctlVersion)) {
-        Write-Warning "[$ScriptName] [FAIL] Could not parse a version from the sentinelctl status output."
-        return $false
-    }
-    Write-Host "[$ScriptName] [PASS] sentinelctl reports version: $sentinelctlVersion"
-
-    # =========================================================================
-    # --- CHECK 3: COMPARE VERSIONS ---
-    # =========================================================================
-    Write-Host "[$ScriptName] [3/3] Comparing versions..."
-
-    if ($serviceVersion -ne $sentinelctlVersion) {
-        Write-Warning "[$ScriptName] [FAIL] Version Mismatch! Service version is '$serviceVersion', but sentinelctl version is '$sentinelctlVersion'."
-        return $false
-    }
-
-    Write-Host "[$ScriptName] [PASS] Versions match."
-
-    # --- FINAL SUCCESS ---
-    Write-Host "[$ScriptName] --- All health checks passed. Agent is healthy. ---"
-    return $true
 
 } catch {
     Write-Error "[$ScriptName] The Test Script failed with a fatal error: $($_.Exception.Message)"
+    # A fatal error during the test means the state is unknown/unhealthy.
     return $false
 }
