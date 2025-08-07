@@ -2023,59 +2023,58 @@ function Format-C9ObjectForDisplay {
     $FunctionName = "Format-C9ObjectForDisplay"
     $displayRows = @()
 
-    # Define a small helper function to convert CamelCase to Title Case for display
-    # This must be defined inside the function to be compatible with how we use it in Invoke-ImmyCommand.
+    # =========================================================================
+    # --- BEGIN CORRECTED SECTION ---
+    # =========================================================================
+    # This helper is now hardened to prevent the Substring error.
     function ConvertTo-TitleCase ($str) {
         if ([string]::IsNullOrWhiteSpace($str)) { return $str }
-        return -join ($str -split '(?=[A-Z])' | ForEach-Object { $_.Substring(0,1).ToUpper() + $_.Substring(1) + ' ' }).Trim()
+        return -join ($str -split '(?=[A-Z])' | ForEach-Object {
+            # Check if the chunk is longer than one character before calling Substring(1)
+            if ($_.Length -gt 1) {
+                $_.Substring(0,1).ToUpper() + $_.Substring(1) + ' '
+            } else {
+                # If it's only one character, just uppercase it.
+                $_.ToUpper() + ' '
+            }
+        }).Trim()
     }
+    # =========================================================================
+    # --- END CORRECTED SECTION ---
+    # =========================================================================
 
-    # Iterate through each top-level property of the InputObject.
+    # The rest of the function logic remains the same.
     foreach ($topLevelProperty in $InputObject.PSObject.Properties) {
         $topLevelName = $topLevelProperty.Name
         $topLevelValue = $topLevelProperty.Value
 
-        # Check if the property's value is itself a nested object we can iterate through.
         if ($topLevelValue -is [System.Management.Automation.PSCustomObject] -and $topLevelValue.PSObject.Properties.Count -gt 0) {
-            # --- It's a NESTED object ---
-            # Use the parent property's name to create a friendly category name.
             $categoryName = ConvertTo-TitleCase $topLevelName
-            
-            # Iterate through the properties of the *inner* object.
             foreach ($innerProperty in $topLevelValue.PSObject.Properties) {
                 $propName = $innerProperty.Name
                 $propValue = $innerProperty.Value
-
-                # (This is our standard value-formatting logic)
                 $displayValue = ""
                 if ($null -eq $propValue) { $displayValue = "(not set)" } 
                 elseif ($propValue -is [bool]) { $displayValue = if ($propValue) { "[TRUE]" } else { "[FALSE]" } } 
                 elseif ($propValue -is [array]) { $displayValue = $propValue -join ", "; if ([string]::IsNullOrWhiteSpace($displayValue)) { $displayValue = "(empty list)" } } 
                 else { $displayValue = "$propValue" }
-
-                # Create the flat row object for this sub-property.
                 $row = New-Object -TypeName PSObject
                 Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $categoryName
-                Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value $propName
+                Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase -str $propName)
                 Add-Member -InputObject $row -MemberType NoteProperty -Name 'Value' -Value $displayValue
                 $displayRows += $row
             }
         } else {
-            # --- It's a SIMPLE property ---
             $propName = $topLevelName
             $propValue = $topLevelValue
-
-            # (Apply the same standard value-formatting logic)
             $displayValue = ""
             if ($null -eq $propValue) { $displayValue = "(not set)" } 
             elseif ($propValue -is [bool]) { $displayValue = if ($propValue) { "[TRUE]" } else { "[FALSE]" } } 
             elseif ($propValue -is [array]) { $displayValue = $propValue -join ", "; if ([string]::IsNullOrWhiteSpace($displayValue)) { $displayValue = "(empty list)" } } 
             else { $displayValue = "$propValue" }
-
-            # Create the flat row object using the default category.
             $row = New-Object -TypeName PSObject
             Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $DefaultCategory
-            Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value $propName
+            Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase -str $propName)
             Add-Member -InputObject $row -MemberType NoteProperty -Name 'Value' -Value $displayValue
             $displayRows += $row
         }
