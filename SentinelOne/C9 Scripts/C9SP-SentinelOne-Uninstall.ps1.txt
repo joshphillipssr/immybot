@@ -22,12 +22,24 @@ Import-Module "C9SentinelOneCloud"
 # This object is in the script: scope, so it will persist across reboots.
 if ($null -eq $script:systemState) {
     Write-Host "[$ScriptName] Phase 0: Performing comprehensive system state assessment..."
-    $script:systemState = [PSCustomObject]@{
-        S1AgentInfo        = Get-C9SentinelOneInfo
-        RebootPolicy       = Get-C9RebootPolicyContext
-        UserActivity       = Get-C9UserActivityStatus
-        RebootRequirements = Get-C9SystemRebootRequirements
-    }
+    
+    # --- ConstrainedLanguage-Safe Object Creation ---
+    # 1. Create an empty PSObject.
+    $script:systemState = New-Object -TypeName PSObject
+    
+    # 2. Add each property one by one using Add-Member.
+    #    The result of each function call is assigned, not used in a complex cast.
+    Add-Member -InputObject $script:systemState -MemberType NoteProperty -Name 'S1AgentInfo' -Value (Get-C9SentinelOneInfo)
+    Add-Member -InputObject $script:systemState -MemberType NoteProperty -Name 'RebootPolicy' -Value (Get-C9RebootPolicyContext)
+    Add-Member -InputObject $script:systemState -MemberType NoteProperty -Name 'UserActivity' -Value (Get-C9UserActivityStatus)
+    Add-Member -InputObject $script:systemState -MemberType NoteProperty -Name 'RebootRequirements' -Value (Get-C9SystemRebootRequirements)
+
+    $formattedState = Format-C9ObjectForDisplay -InputObject $script:systemState | Format-Table -AutoSize | Out-String
+
+    Write-Host "----------------- SYSTEM STATE SUMMARY -----------------"
+    Write-Host -ForegroundColor Cyan $formattedState
+    Write-Host "--------------------------------------------------------"
+
     Write-Host "[$ScriptName] Phase 0 Complete. System state has been captured."
 } else {
     Write-Host "[$ScriptName] Phase 0: Resuming with persisted system state from before reboot."
@@ -101,7 +113,7 @@ try {
     # pre-flight MsiExec check
     Write-Host "[$ScriptName] Running inline pre-uninstallation checks..."
     try {
-        Test-MsiExecMutex -ErrorAction Stop
+        Test-C9MsiExecMutex -ErrorAction Stop
         Write-Host "[$ScriptName] MSI Mutex is available. Safe to proceed with uninstallation..."
     } catch {
         throw "[$ScriptName] Pre-flight check failed: MSI installation in progress."
@@ -125,10 +137,13 @@ try {
             Restart-ComputerAndWait -TimeoutDuration (New-TimeSpan -Minutes 15)
             Write-Host "[$ScriptName] SUCCESS: The pre-flight reboot completed."
             
-            # After reboot, we must refresh the 'RebootRequirements' portion of our state object.
-            # The other data (S1 info, Policy) is still valid.
-            Write-Host "[$ScriptName] Refreshing system reboot requirements state post-reboot..."
+            # --- NEW CACHE INVALIDATION LOGIC ---
+            Write-Host "[$ScriptName] Invalidating caches post-reboot..."
+            # Refresh system reboot requirements state.
             $script:systemState.RebootRequirements = Get-C9SystemRebootRequirements
+            # Invalidate the quser cache to force a fresh call.
+            $script:quserResult = $null
+            Write-Host "[$ScriptName] Caches successfully invalidated."
 
         } catch {
             throw "FATAL: Pre-flight reboot failed. Error: $_"
