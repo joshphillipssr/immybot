@@ -204,8 +204,6 @@ function Get-C9SentinelOneVersion {
 }
 
 function Get-C9S1EndpointData {
-    #Requires -Version 5.1
-    #Requires -Modules C9S1EndpointTools
     <#
     .SYNOPSIS
         Get-S1Health.ps1 - The 'Get' script for the SentinelOne Health task.
@@ -241,8 +239,7 @@ function Get-C9S1EndpointData {
         
         # Returning the object is the last action. ImmyBot will capture this.
         return $healthReport
-    }
-    catch {
+    } catch {
         # If anything goes wrong (e.g., module not found, catastrophic function error),
         # write a clear error and re-throw to ensure ImmyBot registers the failure.
         $errorMessage = "A fatal error occurred in Get-S1Health.ps1: $($_.Exception.Message)"
@@ -348,13 +345,11 @@ function Test-C9S1LocalUpgradeAuthorization {
         if ($null -ne $response.enabled -and $response.enabled) {
             Write-Host "[$ScriptName - $FunctionName] API Response: Local upgrade authorization is ENABLED."
             return $true
-        }
-        else {
+        } else {
             Write-Host "[$ScriptName - $FunctionName] API Response: Local upgrade authorization is DISABLED."
             return $false
         }
-    }
-    catch {
+    } catch {
         # Check if the error is specifically a 404 Not Found, which indicates a ghost agent.
         if ($_.Exception.Response.StatusCode -eq [System.Net.HttpStatusCode]::NotFound) {
             Write-Warning "[$ScriptName - $FunctionName] Agent ID '$AgentId' returned a 404 (Not Found) from the API. This is a ghost agent."
@@ -399,16 +394,13 @@ function Test-S1InstallPreFlight {
                     ShouldStop = $true
                     Reason     = 'STOP: Agent is healthy and protected by a local upgrade/downgrade policy in the S1 portal.'
                 }
-            }
-            # Step 4b: If not protected, we can proceed.
-            else {
+            } else {
                  return [PSCustomObject]@{
                     ShouldStop = $false
                     Reason     = 'Agent is online and not protected by a local upgrade policy. Proceeding with workflow.'
                 }
             }
-        }
-        catch {
+        } catch {
             # Step 4c: Catch the specific "GHOST_AGENT" error from our helper function. This is a "go" condition.
             if ($_ -eq 'GHOST_AGENT') {
                 return [PSCustomObject]@{
@@ -419,8 +411,7 @@ function Test-S1InstallPreFlight {
             # If it was a different, unexpected error, re-throw it to be caught by the outer block.
             throw $_
         }
-    }
-    catch {
+    } catch {
         # This is a final catch-all for any other unexpected errors. It's safest to allow the installation
         # to proceed but with a clear warning about the pre-flight check failure.
         Write-Warning "[$ScriptName - $FunctionName] An unexpected error occurred during the pre-flight check: $($_.Exception.Message). Defaulting to allow installation."
@@ -654,25 +645,22 @@ function Get-C9S1ComprehensiveStatus {
 
     # Initialize the final report object with a predictable structure.
     $report = [ordered]@{
-        # Top-level summary flags
-        IsPresent           = $false
+        IsPresentAnywhere   = $false # Formerly IsPresent
         IsConsideredHealthy = $false
-        # Data from different sources
-        BaseInfo            = $null # From Get-C9SentinelOneInfo
-        ServiceState        = $null # From Get-C9S1ServiceState
-        DirectoryState      = $null # From Get-C9S1InstallDirectoryState
-        SentinelCtlStatus   = $null # From Get-C9SentinelOneStatus
-        # Cross-validated versions
+        AgentDetails        = $null # Formerly BaseInfo
+        WindowsServicesState= $null # Formerly ServiceState
+        InstallFolderState  = $null # Formerly DirectoryState
+        SentinelCtlStatus   = $null
         VersionFromService  = $null
         VersionFromCtl      = $null
     }
 
     # 1. Get base info (service, paths, version). This is our starting point.
-    $report.BaseInfo = Get-C9SentinelOneInfo
-    $report.VersionFromService = $report.BaseInfo.Version
+    $report.AgentDetails = Get-C9SentinelOneInfo
+    $report.VersionFromService = $report.AgentDetails.Version
 
-    # If BaseInfo is null, the agent isn't installed in a detectable way. We can stop.
-    if (-not $report.BaseInfo) {
+    # If AgentDetails is null, the agent isn't installed in a detectable way. We can stop.
+    if (-not $report.AgentDetails) {
         Write-Warning "[$ScriptName - $FunctionName] Primary check (Get-C9SentinelOneInfo) found no agent. Status check cannot proceed further."
         $report.IsPresent = $false
         return New-Object -TypeName PSObject -Property $report
@@ -697,7 +685,7 @@ function Get-C9S1ComprehensiveStatus {
     
     # 6. Define the final "IsConsideredHealthy" summary status based on our findings.
     # This is where we codify our definition of a healthy agent.
-    $isHealthy = ($report.BaseInfo -and 
+    $isHealthy = ($report.AgentDetails -and 
                   $report.ServiceState.IsRunning_SentinelAgent -and 
                   $report.DirectoryState.IsHealthy -and
                   $report.SentinelCtlStatus.IsHealthy -and
