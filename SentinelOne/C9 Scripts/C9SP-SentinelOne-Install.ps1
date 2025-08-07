@@ -56,7 +56,7 @@ Write-Host "[$ScriptName] Performing comprehensive pre-install checks..."
 
 try {
     Write-Host "[$ScriptName] Checking MSI mutex availability..."       
-    Test-MsiExecMutex
+    Test-C9MsiExecMutex
     Write-Host "[$ScriptName] [PASS] MSI mutex is available."
     
     # Use our new decision logic for ClearPending scenario
