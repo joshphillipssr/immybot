@@ -48,7 +48,6 @@ function Get-C9ComputerLockedStatus {
     }
 
     try {
-        # --- REFACTORED LOGIC ---
         # Step 1: Use the new caching function to get reliable session information.
         Write-Host "[$ScriptName - $FunctionName] Getting user session information from Quser cache..."
         $quserResult = Get-C9QuserResult -Computer $Computer
@@ -61,14 +60,12 @@ function Get-C9ComputerLockedStatus {
                 Write-Host "[$ScriptName - $FunctionName] Cached quser data confirms no users are logged on"
                 $result.LockStatus = "LoggedOut"
                 $result.SystemContextLockStatus = "LoggedOut"
-                return New-Object -TypeName PSObject -Property
-                $result
+                return New-Object -TypeName PSObject -Property $result
             } else {
                 Write-Warning "[$ScriptName - $FunctionName] Cached quser data indicates failure (Exit Code: $($quserResult.ExitCode))"
                 $result.DataSource = "Error - quser failed"
                 $result.LockStatus = "Unknown"
-                return New-Object -TypeName PSObject -Property
-                $result
+                return New-Object -TypeName PSObject -Property $result
             }
         }
 

@@ -639,6 +639,7 @@ function Get-C9S1ComprehensiveStatus {
     param()
 
     $FunctionName = "Get-C9S1ComprehensiveStatus"
+
     Write-Host "================================================================="
     Write-Host "[$ScriptName - $FunctionName] BEGINNING COMPREHENSIVE S1 STATUS CHECK"
     Write-Host "================================================================="
@@ -662,19 +663,19 @@ function Get-C9S1ComprehensiveStatus {
     # If AgentDetails is null, the agent isn't installed in a detectable way. We can stop.
     if (-not $report.AgentDetails) {
         Write-Warning "[$ScriptName - $FunctionName] Primary check (Get-C9SentinelOneInfo) found no agent. Status check cannot proceed further."
-        $report.IsPresent = $false
+        $report.IsPresentAnywhere = $false
         return New-Object -TypeName PSObject -Property $report
     }
 
-    $report.IsPresent = $true
+    $report.IsPresentAnywhere = $true
     Write-Host "[$ScriptName - $FunctionName] Agent is present. Version (from Service): $($report.VersionFromService). Continuing checks..."
 
     # 2. Get the state of all four services.
     $report.ServiceState = Get-C9S1ServiceState
 
     # 3. Get the state of the installation directory.
-    $report.DirectoryState = Get-C9S1InstallDirectoryState -InstallPath $report.BaseInfo.InstallPath
-    
+    $report.InstallFolderState = Get-C9S1InstallDirectoryState -InstallPath $report.AgentDetails.InstallPath
+
     # 4. Get the detailed status from sentinelctl.exe.
     $report.SentinelCtlStatus = Get-C9SentinelOneStatus
     

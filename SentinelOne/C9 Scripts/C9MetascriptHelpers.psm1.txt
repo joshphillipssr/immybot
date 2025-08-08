@@ -30,11 +30,21 @@ function Get-C9ComputerLockedStatus {
     Write-Host "[$ScriptName - $FunctionName] Getting comprehensive computer lock status..."
 
     $result = [ordered]@{ # (result object initialization remains the same)
-        HasActiveConsoleUser    = $false; ConsoleUserName = $null; SessionState = "Unknown";
-        IsLocked                = $false; LockStatus      = "Unknown"; SystemContextLockStatus = "Unknown";
-        UserContextLockStatus   = "Unknown"; AllSessions   = @(); ActiveSessions = @();
-        DisconnectedSessions    = @(); SessionCount      = 0; DataSource = "quser.exe (cached) + tasklist.exe";
-        RawQuserOutput          = ""; LogonUIRunning      = $false; DetectionMethod = "System Context (tasklist)";
+        HasActiveConsoleUser    = $false
+        ConsoleUserName         = $null
+        SessionState            = "Unknown"
+        IsLocked                = $false
+        LockStatus              = "Unknown"
+        SystemContextLockStatus = "Unknown"
+        UserContextLockStatus   = "Unknown"
+        AllSessions             = @()
+        ActiveSessions          = @()
+        DisconnectedSessions    = @()
+        SessionCount            = 0
+        DataSource              = "quser.exe (cached) + tasklist.exe"
+        RawQuserOutput          = ""
+        LogonUIRunning          = $false
+        DetectionMethod         = "System Context (tasklist)"
     }
 
     try {
@@ -51,12 +61,14 @@ function Get-C9ComputerLockedStatus {
                 Write-Host "[$ScriptName - $FunctionName] Cached quser data confirms no users are logged on"
                 $result.LockStatus = "LoggedOut"
                 $result.SystemContextLockStatus = "LoggedOut"
-                return New-Object -TypeName PSObject -Property $result
+                return New-Object -TypeName PSObject -Property
+                $result
             } else {
                 Write-Warning "[$ScriptName - $FunctionName] Cached quser data indicates failure (Exit Code: $($quserResult.ExitCode))"
                 $result.DataSource = "Error - quser failed"
                 $result.LockStatus = "Unknown"
-                return New-Object -TypeName PSObject -Property $result
+                return New-Object -TypeName PSObject -Property
+                $result
             }
         }
 
@@ -66,17 +78,40 @@ function Get-C9ComputerLockedStatus {
         $lines = $quserResult.StandardOutput -split "`r`n|`n" | Where-Object { $_.Trim() -ne "" }
         for ($i = 1; $i -lt $lines.Count; $i++) {
             # ... (the quser parsing logic is complex but remains exactly the same as before) ...
-            $line = $lines[$i].Trim(); if ([string]::IsNullOrWhiteSpace($line)) { continue };
+            $line = $lines[$i].Trim(); if ([string]::IsNullOrWhiteSpace($line)) { continue }
             $parts = $line -split '\s+', 7; if ($parts.Count -ge 4) {
-                $sessionProperties = [ordered]@{ UserName = $parts[0]; SessionName = if ($parts[1] -match '^\d+$') { "console" } else { $parts[1] }; SessionId = if ($parts[1] -match '^\d+$') { $parts[1] } else { $parts[2] }; State = if ($parts[1] -match '^\d+$') { $parts[2] } else { $parts[3] }; IdleTime = if ($parts[1] -match '^\d+$') { $parts[3] } else { $parts[4] }; LogonTime = if ($parts[1] -match '^\d+$') { ($parts[4..6] -join ' ') } else { ($parts[5..6] -join ' ') } };
-                $session = New-Object -TypeName PSObject -Property $sessionProperties; $sessions += $session;
+                $sessionProperties = [ordered]@{ UserName = $parts[0]; SessionName = if ($parts[1] -match '^\d+$') { "console"
+            } else {
+                $parts[1] }
+                SessionId = if ($parts[1] -match '^\d+$') {
+                    $parts[1]
+                } else {
+                    $parts[2] }
+                    State = if ($parts[1] -match '^\d+$') {
+                        $parts[2] } else { $parts[3] }
+                        IdleTime = if ($parts[1] -match '^\d+$') {
+                            $parts[3]
+                        } else {
+                            $parts[4] }
+                            LogonTime = if ($parts[1] -match '^\d+$') {
+                                ($parts[4..6] -join ' ')
+                        } else {
+                            ($parts[5..6] -join ' ')
+                        }
+                    }
+                $session = New-Object -TypeName PSObject -Property $sessionProperties; $sessions += $session
                 if ($session.State -eq "Active" -and ($session.SessionName -eq "console" -or $session.SessionId -match '^[0-2]$')) {
-                    $result.HasActiveConsoleUser = $true; $result.ConsoleUserName = $session.UserName; $result.SessionState = $session.State;
+                    $result.HasActiveConsoleUser = $true
+                    $result.ConsoleUserName = $session.UserName
+                    $result.SessionState = $session.State
                     Write-Host "[$ScriptName - $FunctionName] Found active console user: $($session.UserName)"
                 }
             }
         }
-        $result.AllSessions = $sessions; $result.ActiveSessions = @($sessions | Where-Object { $_.State -eq "Active" }); $result.DisconnectedSessions = @($sessions | Where-Object { $_.State -eq "Disc" }); $result.SessionCount = $sessions.Count;
+        $result.AllSessions = $sessions
+        $result.ActiveSessions = @($sessions | Where-Object { $_.State -eq "Active" })
+        $result.DisconnectedSessions = @($sessions | Where-Object { $_.State -eq "Disc" })
+        $result.SessionCount = $sessions.Count
         Write-Host "[$ScriptName - $FunctionName] Found $($result.SessionCount) total sessions ($($result.ActiveSessions.Count) active, $($result.DisconnectedSessions.Count) disconnected)"
 
         # Step 3: System context lock detection using tasklist.exe (This is a different command and is unchanged)
@@ -84,17 +119,56 @@ function Get-C9ComputerLockedStatus {
         $tasklistResult = Invoke-C9EndpointCommand -FilePath "tasklist.exe" -ArgumentList @("/FI", "IMAGENAME eq LogonUI.exe", "/FO", "CSV") -Computer $Computer
         # ... (The rest of the function for parsing tasklist and determining final lock status is unchanged) ...
         if ($tasklistResult.ExitCode -eq 0) {
-            $result.LogonUIRunning = $tasklistResult.StandardOutput -match "LogonUI.exe"; Write-Host "[$ScriptName - $FunctionName] tasklist.exe LogonUI detection result: $($result.LogonUIRunning)";
-            if ($result.HasActiveConsoleUser) { if ($result.LogonUIRunning) { $result.SystemContextLockStatus = "Locked" } else { $result.SystemContextLockStatus = "Unlocked" } } else { $result.SystemContextLockStatus = "LoggedOut" }
-        } else { Write-Warning "[$ScriptName - $FunctionName] Could not check LogonUI.exe process status"; $result.SystemContextLockStatus = "Error" }
-        if ($IncludeUserContextCheck.IsPresent -and $result.HasActiveConsoleUser) { # ... (optional user context check unchanged) ...
-        } else { if (-not $result.HasActiveConsoleUser) { $result.UserContextLockStatus = "No User" } else { $result.UserContextLockStatus = "Not Requested" } }
-        Write-Host "[$ScriptName - $FunctionName] Determining final lock status...";
-        if (-not $result.HasActiveConsoleUser) { $result.LockStatus = "LoggedOut"; $result.IsLocked = $false } else { if ($result.SystemContextLockStatus -eq "Locked") { $result.LockStatus = "Locked"; $result.IsLocked = $true } elseif ($result.SystemContextLockStatus -eq "Unlocked") { $result.LockStatus = "Unlocked"; $result.IsLocked = $false } else { if ($result.UserContextLockStatus -eq "Locked") { $result.LockStatus = "Locked"; $result.IsLocked = $true } elseif ($result.UserContextLockStatus -eq "Unlocked") { $result.LockStatus = "Unlocked"; $result.IsLocked = $false } else { $result.LockStatus = "Unknown"; $result.IsLocked = $false } } }
+            $result.LogonUIRunning = $tasklistResult.StandardOutput -match "LogonUI.exe"
+            Write-Host "[$ScriptName - $FunctionName] tasklist.exe LogonUI detection result: $($result.LogonUIRunning)"
+            if ($result.HasActiveConsoleUser) {
+                if ($result.LogonUIRunning) {
+                    $result.SystemContextLockStatus = "Locked"
+                } else {
+                    $result.SystemContextLockStatus = "Unlocked" }
+            } else {
+                $result.SystemContextLockStatus = "LoggedOut"
+            }
+        } else {
+            Write-Warning "[$ScriptName - $FunctionName] Could not check LogonUI.exe process status"; $result.SystemContextLockStatus = "Error"
+        }
+        if ($IncludeUserContextCheck.IsPresent -and $result.HasActiveConsoleUser) {
+            # ... (optional user context check unchanged) ...
+        } else {
+            if (-not $result.HasActiveConsoleUser) {
+                $result.UserContextLockStatus = "No User"
+            } else {
+                $result.UserContextLockStatus = "Not Requested" } 
+            }
+        Write-Host "[$ScriptName - $FunctionName] Determining final lock status..."
+        if (-not $result.HasActiveConsoleUser) {
+            $result.LockStatus = "LoggedOut"
+            $result.IsLocked = $false
+        } else {
+            if ($result.SystemContextLockStatus -eq "Locked") {
+                $result.LockStatus = "Locked"
+                $result.IsLocked = $true
+            } elseif ($result.SystemContextLockStatus -eq "Unlocked") {
+                $result.LockStatus = "Unlocked"
+                $result.IsLocked = $false
+            } else {
+                if ($result.UserContextLockStatus -eq "Locked") {
+                    $result.LockStatus = "Locked"
+                    $result.IsLocked = $true
+                } elseif ($result.UserContextLockStatus -eq "Unlocked") {
+                    $result.LockStatus = "Unlocked"
+                    $result.IsLocked = $false
+                } else {
+                    $result.LockStatus = "Unknown";
+                    $result.IsLocked = $false
+                }
+            }
+        }
         Write-Host "[$ScriptName - $FunctionName] Final lock status: $($result.LockStatus) (System: $($result.SystemContextLockStatus), User: $($result.UserContextLockStatus))"
     } catch {
         Write-Error "[$ScriptName - $FunctionName] Error gathering computer lock status: $($_.Exception.Message)"
-        $result.DataSource = "Error"; $result.LockStatus = "Error"
+        $result.DataSource = "Error"
+        $result.LockStatus = "Error"
     }
 
     Write-Host "[$ScriptName - $FunctionName] computer lock status gathering complete"
@@ -135,8 +209,7 @@ function Get-C9QuserResult {
         $script:quserResult = Invoke-C9EndpointCommand -FilePath "quser.exe" -ArgumentList @() -Computer $Computer
         Write-Host "[$ScriptName - $FunctionName] 'quser.exe' result has been cached."
         return $script:quserResult
-    }
-    catch {
+    } catch {
         Write-Error "[$ScriptName - $FunctionName] A fatal error occurred while executing quser.exe. Error: $_"
         # --- THIS IS THE CORRECTED PART ---
         # On failure, cache a failure object so we don't retry repeatedly.
@@ -201,8 +274,7 @@ function Get-C9UserIdleTime {
 "@
             return [PInvoke.Win32.UserInput]::IdleTime
         }
-    }
-    catch {
+    } catch {
         # If no user is logged on, this command fails, which is our signal the machine is idle.
         Write-Warning "[$ScriptName - $FunctionName] Could not execute in user context (likely no user is logged on). Assuming machine is idle."
         return [TimeSpan]::MaxValue
@@ -526,15 +598,13 @@ function Get-C9SystemRebootRequirements {
 
     # Initialize result object with only core types
     $result = [ordered]@{
-        IsRebootPending                 = $false
-        HasCriticalRebootSources        = $false
-        RebootSources                   = @()
-        CriticalSources                 = @()
-        NonCriticalSources              = @()
-        WindowsUpdateRelated            = $false
-        # We no longer store the raw object to prevent ConstrainedLanguage errors.
-        # RawPendingRebootData            = $null 
-        DataSource                      = "Native Test-PendingReboot"
+        IsRebootPending      = $false
+        RebootWillBeRequired = $false # Formerly HasCriticalRebootSources
+        ReasonsForReboot     = @()   # Formerly RebootSources
+        CriticalSources      = @()
+        NonCriticalSources   = @()
+        WindowsUpdateRelated = $false
+        DataSource           = "Native Test-PendingReboot"
     }
 
     try {
@@ -600,7 +670,7 @@ function Get-C9SystemRebootRequirements {
                 }
             }
 
-            $result.HasCriticalRebootSources = $result.CriticalSources.Count -gt 0
+            $result.RebootWillBeRequired = $result.CriticalSources.Count -gt 0
         } else {
             Write-Host "[$ScriptName - $FunctionName] No pending reboot detected"
         }
@@ -649,8 +719,7 @@ function Test-C9IsUserLoggedIn {
             if (($quserResult.StandardOutput.Contains("no User exists for")) -or ($quserResult.StandardError.Contains("No User exists for"))) {
                 Write-Host "[$ScriptName - $FunctionName] quser data confirms no users are logged on. Returning `$false."
                 return $false
-            }
-            else {
+            } else {
                 Write-Warning "[$ScriptName - $FunctionName] quser data indicates failure with Exit Code $($quserResult.ExitCode). Assuming user is present for safety."
                 return $true
             }
@@ -679,8 +748,7 @@ function Test-C9IsUserLoggedIn {
             Write-Host "[$ScriptName - $FunctionName] quser data confirms no ACTIVE sessions were found (sessions may be disconnected). Returning `$false."
             return $false
         }
-    }
-    catch {
+    } catch {
         Write-Warning "[$ScriptName - $FunctionName] An unexpected error occurred while analyzing quser data. Assuming user is present for safety. $_"
         return $true # Fail safe
     }
@@ -722,8 +790,7 @@ function Test-C9SystemPrerequisites {
     try {
         Test-C9MsiExecMutex -ErrorAction Stop
         $messages += "[OK] No conflicting MSI installation is in progress."
-    }
-    catch {
+    } catch {
         $result.MsiMutexLocked = $true
         $messages += "[FAIL] A conflicting MSI installation is in progress. Error: $($_.Exception.Message)"
     }
@@ -750,14 +817,12 @@ function Test-C9SystemPrerequisites {
                 # The lines below will only run if the script continues for some reason.
                 $result.RemediationSucceeded = $true
                 $messages += "[SUCCESS] The self-healing reboot completed successfully."
-            }
-            catch {
+            } catch {
                 $result.RemediationSucceeded = $false
                 $messages += "[FAIL] The self-healing reboot process failed. Last error: $($_.Exception.Message)"
             }
         }
-    }
-    else {
+    } else {
         $messages += "[OK] No pending reboot detected."
     }
     # =========================================================================
@@ -773,32 +838,32 @@ function Test-C9SystemPrerequisites {
 
 function Test-C9EndpointSafeToReboot {
     <#
-        .SYNOPSIS
-            (Orchestrator) Determines if an endpoint is safe for invasive work, prioritizing explicit platform policies.
-        .DESCRIPTION
-            This is the definitive gatekeeper function. It performs a three-tiered safety check:
-            1.  (Highest Priority) Checks an explicitly passed-in platform policy from a calling script.
-            2.  (Second Priority) Checks for the global '$rebootPreference' variable from a Maintenance Task.
-            3.  (Final Check) If no platform policy is found, it calls specialist functions like Get-C9UserIdleTime
-                and Get-ComputerLockedStatus to perform granular checks.
-        .PARAMETER PlatformPolicy
-            An explicit policy string (e.g., "Suppress") passed from a calling script (e.g., an Install script).
-        .PARAMETER InitialDelaySeconds
-            An optional delay (in seconds) to apply before running checks, allowing system state to settle.
-        .PARAMETER Computer
-            The ImmyBot computer object to test. Defaults to the computer in the current context via (Get-ImmyComputer).
-        .PARAMETER RequiredIdleMinutes
-            The minimum number of minutes a user must be idle for the endpoint to be considered safe. Defaults to 30.
-        .PARAMETER AllowWhenLocked
-            A switch to indicate if a locked computer should be considered safe, regardless of idle time. Defaults to $true.
-        .PARAMETER MaintenanceWindowStart
-            The start time for a custom maintenance window in 24-hour format (e.g., "22:00"). This check runs IN ADDITION to the platform policy check.
-        .PARAMETER MaintenanceWindowEnd
-            The end time for a custom maintenance window in 24-hour format (e.g., "05:00").
-        .PARAMETER IgnorePlatformPolicy
-            A switch to bypass the primary check of the ImmyBot platform's '$rebootPreference' variable. Use with caution.
-        .LOGMODULE
-            Write-C9LogMessage should by imported into scripts that use this function
+    .SYNOPSIS
+        (Orchestrator) Determines if an endpoint is safe for invasive work, prioritizing explicit platform policies.
+    .DESCRIPTION
+        This is the definitive gatekeeper function. It performs a three-tiered safety check:
+        1.  (Highest Priority) Checks an explicitly passed-in platform policy from a calling script.
+        2.  (Second Priority) Checks for the global '$rebootPreference' variable from a Maintenance Task.
+        3.  (Final Check) If no platform policy is found, it calls specialist functions like Get-C9UserIdleTime
+            and Get-ComputerLockedStatus to perform granular checks.
+    .PARAMETER PlatformPolicy
+        An explicit policy string (e.g., "Suppress") passed from a calling script (e.g., an Install script).
+    .PARAMETER InitialDelaySeconds
+        An optional delay (in seconds) to apply before running checks, allowing system state to settle.
+    .PARAMETER Computer
+        The ImmyBot computer object to test. Defaults to the computer in the current context via (Get-ImmyComputer).
+    .PARAMETER RequiredIdleMinutes
+        The minimum number of minutes a user must be idle for the endpoint to be considered safe. Defaults to 30.
+    .PARAMETER AllowWhenLocked
+        A switch to indicate if a locked computer should be considered safe, regardless of idle time. Defaults to $true.
+    .PARAMETER MaintenanceWindowStart
+        The start time for a custom maintenance window in 24-hour format (e.g., "22:00"). This check runs IN ADDITION to the platform policy check.
+    .PARAMETER MaintenanceWindowEnd
+        The end time for a custom maintenance window in 24-hour format (e.g., "05:00").
+    .PARAMETER IgnorePlatformPolicy
+        A switch to bypass the primary check of the ImmyBot platform's '$rebootPreference' variable. Use with caution.
+    .LOGMODULE
+        Write-C9LogMessage should by imported into scripts that use this function
     #>
 
     [CmdletBinding()]
@@ -900,8 +965,7 @@ function Test-C9EndpointSafeToReboot {
                 $result.LoggedOnUser = "None"
                 Write-Host "[$ScriptName - $FunctionName] No interactive users found."
             }
-        }
-        catch {
+        } catch {
             Write-Host "[$ScriptName - $FunctionName] Could not determine logged on user. $_"
             $result.LoggedOnUser = "Error"
         }
@@ -931,8 +995,7 @@ function Test-C9EndpointSafeToReboot {
                 
                 $result.IsInMaintWindow = $isWithinMaintenanceWindow
                 Write-Host "[$ScriptName - $FunctionName] Endpoint current time: $($endpointNow.ToString('HH:mm')). Is within custom maintenance window: $isWithinMaintenanceWindow."
-            }
-            catch { 
+            } catch { 
                 Write-Host "[$ScriptName - $FunctionName] Failed to check custom maintenance window: $_" 
             }
         }
@@ -1438,7 +1501,7 @@ function Invoke-PreActionDecisionLogic {
     Write-Host "[$ScriptName - $FunctionName] Evaluating PreAction scenario..."
 
     # Step 1: Check if existing pending reboot should block the operation
-    if ($RebootRequirements.IsRebootPending -and $RebootRequirements.HasCriticalRebootSources) {
+    if ($RebootRequirements.IsRebootPending -and $RebootRequirements.RebootWillBeRequired) {
         Write-Host "[$ScriptName - $FunctionName] Critical pending reboot detected: $($RebootRequirements.CriticalSources -join ', ')"
         
         # Check platform policy vs override
@@ -1635,7 +1698,8 @@ function Invoke-ClearPendingDecisionLogic {
     if (-not $userActivityCheck.IsSafe) {
         $Result.ShouldProceed = $false
         $Result.ShouldPromptUser = $userActivityCheck.ShouldPrompt
-        $Result.UserInteractionMode = if ($userActivityCheck.ShouldPrompt) { "Prompt" } else { "None" }
+        $Result.UserInteractionMode = if ($userActivityCheck.ShouldPrompt) { "Prompt"
+    } else { "None" }
         $Result.Reason = "Pending reboot exists but user activity prevents safe reboot: $($userActivityCheck.Reason)"
         $Result.RecommendedAction = "Wait for user to become inactive or schedule reboot"
         return $Result
@@ -1966,12 +2030,12 @@ function Invoke-C9EndpointCommand {
             $stdout = $p.StandardOutput.ReadToEnd()
             $stderr = $p.StandardError.ReadToEnd()
             return [PSCustomObject]@{ ExitCode = $p.ExitCode; StandardOutput = $stdout; StandardError = $stderr }
-        }
-        catch {
+        } catch {
             throw "[$using:ScriptName - $using:FunctionName] Failed to start or monitor process '$($using:FilePath)'. Error: $_"
-        }
-        finally {
-            if ($p) { $p.Dispose() }
+        } finally {
+            if ($p) {
+                $p.Dispose()
+            }
         }
 
     } # Note: No -ArgumentList is used here.
@@ -2028,7 +2092,9 @@ function Format-C9ObjectForDisplay {
     # =========================================================================
     # This helper is now hardened to prevent the Substring error.
     function ConvertTo-TitleCase ($str) {
-        if ([string]::IsNullOrWhiteSpace($str)) { return $str }
+        if ([string]::IsNullOrWhiteSpace($str)) {
+            return $str
+        }
         return -join ($str -split '(?=[A-Z])' | ForEach-Object {
             # Check if the chunk is longer than one character before calling Substring(1)
             if ($_.Length -gt 1) {
@@ -2054,10 +2120,18 @@ function Format-C9ObjectForDisplay {
                 $propName = $innerProperty.Name
                 $propValue = $innerProperty.Value
                 $displayValue = ""
-                if ($null -eq $propValue) { $displayValue = "(not set)" } 
-                elseif ($propValue -is [bool]) { $displayValue = if ($propValue) { "[TRUE]" } else { "[FALSE]" } } 
-                elseif ($propValue -is [array]) { $displayValue = $propValue -join ", "; if ([string]::IsNullOrWhiteSpace($displayValue)) { $displayValue = "(empty list)" } } 
-                else { $displayValue = "$propValue" }
+                if ($null -eq $propValue) {
+                    $displayValue = "(not set)"
+                } elseif ($propValue -is [bool]) {
+                    $displayValue = if ($propValue) { "[TRUE]" } else { "[FALSE]" }
+                } elseif ($propValue -is [array]) {
+                    $displayValue = $propValue -join ", "
+                    if ([string]::IsNullOrWhiteSpace($displayValue)) {
+                        $displayValue = "(empty list)"
+                    }
+                } else {
+                    $displayValue = "$propValue"
+                }
                 $row = New-Object -TypeName PSObject
                 Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $categoryName
                 Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase -str $propName)
@@ -2068,10 +2142,22 @@ function Format-C9ObjectForDisplay {
             $propName = $topLevelName
             $propValue = $topLevelValue
             $displayValue = ""
-            if ($null -eq $propValue) { $displayValue = "(not set)" } 
-            elseif ($propValue -is [bool]) { $displayValue = if ($propValue) { "[TRUE]" } else { "[FALSE]" } } 
-            elseif ($propValue -is [array]) { $displayValue = $propValue -join ", "; if ([string]::IsNullOrWhiteSpace($displayValue)) { $displayValue = "(empty list)" } } 
-            else { $displayValue = "$propValue" }
+            if ($null -eq $propValue) {
+                $displayValue = "(not set)"
+            } elseif ($propValue -is [bool]) {
+                $displayValue = if ($propValue) {
+                    "[TRUE]"
+                } else {
+                    "[FALSE]"
+                }
+            } elseif ($propValue -is [array]) {
+                $displayValue = $propValue -join ", "
+                if ([string]::IsNullOrWhiteSpace($displayValue)) {
+                    $displayValue = "(empty list)"
+                }
+            } else {
+                $displayValue = "$propValue"
+            }
             $row = New-Object -TypeName PSObject
             Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $DefaultCategory
             Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase -str $propName)

@@ -133,7 +133,9 @@ try {
     # --- Core cleaner execution ---
     if ($playbook -ne "RemnantCleanup") {
         if ($script:systemState.CloudCredentials.HasSiteToken) {
+            $siteTokenForEndpoint = $script:systemState.CloudCredentials.SiteToken # Create simple variable
             Write-Host "[$ScriptName] Site token found. Proceeding with modern cleaner..."
+
             $exitCodeFile = "C:\Windows\Temp\s1_uninstall_exit_code.txt"
             $tempUninstallDir = "C:\Temp\S1_Uninstall_$(Get-Date -f yyyyMMdd-hhmmss)"
     
@@ -142,7 +144,7 @@ try {
                 New-Item -ItemType Directory -Path $using:tempUninstallDir -Force | Out-Null
                 $destination = Join-Path -Path $using:tempUninstallDir -ChildPath (Split-Path $source -Leaf)
                 Copy-Item -Path $source -Destination $destination -Force
-                $cleanerArgs = "-c -q -t `"$($using:script.systemState.CloudCredentials.SiteToken)`"" # Use persisted token
+                $cleanerArgs = "-c -q -t `"$($using:siteTokenForEndpoint)`"" 
                 $InstallProcess = Start-Process -NoNewWindow -PassThru -Wait -FilePath $destination -ArgumentList $cleanerArgs
                 $LASTEXITCODE | Out-File -FilePath $using:exitCodeFile -Encoding ascii
             }
