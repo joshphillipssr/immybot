@@ -87,80 +87,89 @@ function Get-C9ComprehensiveSystemState {
 }
 
 function Format-C9ObjectForDisplay {
+    [CmdletBinding()]
     param(
+        [Parameter(Mandatory = $true)]
         [PSObject]$InputObject,
+        [Parameter(Mandatory = $false)]
         [string]$DefaultCategory = "General"
     )
-    $rows = @()
+
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
 
     $FunctionName = "Format-C9ObjectForDisplay"
-
-    Write-Host -Fore Cyan"[$ScriptName - $FunctionName] I exist to make things in the output stream look nice, which isn't easy...lot's of rules to follow..."
-    function ConvertTo-TitleCase {
-        param($str)
+   
+    $displayRows = @()
+    function ConvertTo-TitleCase ($str) {
         if ([string]::IsNullOrWhiteSpace($str)) {
             return $str
         }
         return -join ($str -split '(?=[A-Z])' | ForEach-Object {
-            if ($_.Length -gt 1) { $_.Substring(0,1).ToUpper() + $_.Substring(1) + ' '
-        } else { $_.ToUpper() + ' ' }
+            if ($_.Length -gt 1) {
+                $_.Substring(0,1).ToUpper() + $_.Substring(1) + ' '
+            } else {
+                $_.ToUpper() + ' '
+            }
         }).Trim()
     }
-
-    foreach ($prop in $InputObject.PSObject.Properties) {
-        if ($prop.Value -is [PSObject] -and $prop.Value.PSObject.Properties.Count -gt 0) {
-            $category = ConvertTo-TitleCase $prop.Name
-            foreach ($inner in $prop.Value.PSObject.Properties) {
-                $value = $inner.Value
-                if ($null -eq $value) {
-                    $displayValue = "(not set)"
-                } elseif ($value -is [bool]) {
-                    $displayValue = if ($value) {
-                        "[TRUE]"
-                    } else {
-                        "[FALSE]"
-                    }
-                } elseif ($value -is [array]) {
-                    $displayValue = $value -join ', '
-                    if ([string]::IsNullOrWhiteSpace($displayValue)) {
-                        $displayValue = "(empty list)"
-                    }
-                } else {
-                    $displayValue = "$value"
+    foreach ($topLevelProperty in $InputObject.PSObject.Properties) {
+        $topLevelName = $topLevelProperty.Name
+        $topLevelValue = $topLevelProperty.Value
+        if (($topLevelValue -is [System.Management.Automation.PSCustomObject] -or $topLevelValue -is [array]) -and $topLevelValue.Count -gt 0) {
+            $categoryName = ConvertTo-TitleCase $topLevelName
+            foreach ($item in [array]$topLevelValue) {
+                if ($item -isnot [System.Management.Automation.PSCustomObject]) {
+                    continue
                 }
-                $row = New-Object PSCustomObject
-                Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $category
-                Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase $inner.Name)
-                Add-Member -InputObject $row -MemberType NoteProperty -Name 'Value' -Value $displayValue
-                $rows += $row
+                if ($item.PSObject.Properties.Name -contains 'Property' -and $item.PSObject.Properties.Name -contains 'Value') {
+                    $propName = $item.Property
+                    $propValue = $item.Value
+                    $row = New-Object -TypeName PSObject
+                    Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $categoryName
+                    Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase -str $propName)
+                    Add-Member -InputObject $row -MemberType NoteProperty -Name 'Value' -Value "$propValue"
+                    $displayRows += $row
+                } else {
+                    foreach ($innerProperty in $item.PSObject.Properties) {
+                        $propName = $innerProperty.Name
+                        $propValue = $innerProperty.Value
+                        $displayValue = if ($null -eq $propValue) {
+                            "(not set)"
+                        } elseif ($propValue -is [bool]) {
+                            if ($propValue) { "[TRUE]" } else { "[FALSE]" }
+                        } else {
+                            "$propValue"
+                        }
+                        $row = New-Object -TypeName PSObject
+                        Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $categoryName
+                        Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase -str $propName)
+                        Add-Member -InputObject $row -MemberType NoteProperty -Name 'Value' -Value $displayValue
+                        $displayRows += $row
+                    }
+                }
             }
         } else {
-            $name = $prop.Name
-            $value = $prop.Value
-            if ($null -eq $value) {
-                $displayValue = "(not set)"
-            } elseif ($value -is [bool]) {
-                $displayValue = if ($value) {
-                    "[TRUE]"
-                } else {
-                    "[FALSE]"
-                }
-            } elseif ($value -is [array]) {
-                $displayValue = $value -join ', '
-                if ([string]::IsNullOrWhiteSpace($displayValue)) {
-                    $displayValue = "(empty list)"
-                }
+            $propName = $topLevelName
+            $propValue = $topLevelValue
+            $displayValue = if ($null -eq $propValue) {
+                "(not set)"
+            } elseif ($propValue -is [bool]) {
+                if ($propValue) { "[TRUE]"
+            } else { "[FALSE]" }
+            } elseif ($propValue -is [array]) {
+                ($propValue -join ', ')
             } else {
-                $displayValue = "$value"
+                "$propValue"
             }
-            $row = New-Object PSCustomObject
+            $row = New-Object -TypeName PSObject
             Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $DefaultCategory
-            Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase $name)
+            Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase -str $propName)
             Add-Member -InputObject $row -MemberType NoteProperty -Name 'Value' -Value $displayValue
-            $rows += $row
+            $displayRows += $row
         }
     }
-    return $rows
+    return $displayRows
 }
 
 function Get-C9QuserResult {
@@ -1957,46 +1966,37 @@ function Invoke-C9EndpointCommand {
     
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true, Position = 0)]
-        [string]$FilePath,
-
-        [Parameter(Mandatory = $false, Position = 1)]
-        [string[]]$ArgumentList,
-
-        [Parameter(Mandatory = $false)]
-        [string]$WorkingDirectory,
-
-        [Parameter(Mandatory = $false)]
-        [int]$TimeoutSeconds = 600,
-
-        [Parameter(Mandatory = $false)]
-        $Computer = (Get-ImmyComputer)
+    [Parameter(Mandatory = $true, Position = 0)]
+    [string]$FilePath,
+    [Parameter(Mandatory = $false, Position = 1)]
+    [string[]]$ArgumentList,
+    [Parameter(Mandatory = $false)]
+    [string]$WorkingDirectory,
+    [Parameter(Mandatory = $false)]
+    [int]$TimeoutSeconds = 600,
+    [Parameter(Mandatory = $false)]
+    $Computer = (Get-ImmyComputer)
     )
+
+    $VerbosePreference = "Continue"
+    $DebugPreference = "Continue"
 
     $FunctionName = "Invoke-C9EndpointCommand"
 
-    Write-Host "[$ScriptName - $FunctionName] Preparing to execute '$FilePath' with arguments: $($ArgumentList -join ' ')"
-
-    # We use the $using: scope modifier to reliably pass variables into the script block,
-    # bypassing the unreliable -ArgumentList parameter binding mechanism.
+    Write-Host -ForegroundColor DarkYellow "[$ScriptName - $FunctionName] Preparing to execute '$FilePath' with arguments: $($ArgumentList -join ' ')"
     $result = Invoke-ImmyCommand -Computer $Computer -Timeout $TimeoutSeconds -ScriptBlock {
-        
-        # We do not use a param() block here; we access the variables directly via $using:
-        Write-Host "[$using:ScriptName - $using:FunctionName] Endpoint received command: '$($using:FilePath)'"
-        Write-Host "[$using:ScriptName - $using:FunctionName] Endpoint received argument: '$($using:ArgumentList -join ' ')'"
-        
+        Write-Host -ForegroundColor DarkYellow "[$using:ScriptName - $using:FunctionName] Endpoint received command: '$($using:FilePath)'"
+        Write-Host -ForegroundColor DarkYellow "[$using:ScriptName - $using:FunctionName] Endpoint received argument: '$($using:ArgumentList -join ' ')'"
         if (-not (Test-Path -Path $using:FilePath -PathType Leaf)) {
-            throw "[$using:ScriptName - $using:FunctionName] Executable not found at path: $($using:FilePath)"
+            throw "Executable not found at path: $($using:FilePath)"
         }
-
-        # This logic correctly handles arguments with spaces by quoting them.
         $formattedArgs = foreach ($arg in $using:ArgumentList) {
-            if ($arg -match '\s') { "`"$arg`"" } else { $arg }
+            if ($arg -match '\s') {
+                "`"$arg`""
+            } else { $arg }
         }
         $argumentString = $formattedArgs -join ' '
-
-        Write-Host "[$using:ScriptName - $using:FunctionName] Executing: `"$($using:FilePath)`" $argumentString"
-
+        Write-Host -ForegroundColor DarkYellow "[$using:ScriptName - $using:FunctionName] Executing: `"$($using:FilePath)`" $argumentString"
         $pinfo = New-Object System.Diagnostics.ProcessStartInfo
         $pinfo.FileName = $using:FilePath
         $pinfo.Arguments = $argumentString
@@ -2004,45 +2004,39 @@ function Invoke-C9EndpointCommand {
         $pinfo.RedirectStandardError = $true
         $pinfo.UseShellExecute = $false
         $pinfo.CreateNoWindow = $true
-
         if (-not [string]::IsNullOrWhiteSpace($using:WorkingDirectory)) {
             $pinfo.WorkingDirectory = $using:WorkingDirectory
         }
-        
         $p = New-Object System.Diagnostics.Process
         $p.StartInfo = $pinfo
-
         try {
-            $p.Start() | Out-Null
-            $p.WaitForExit()
+            $p.Start() | Out-Null; $p.WaitForExit()
             $stdout = $p.StandardOutput.ReadToEnd()
             $stderr = $p.StandardError.ReadToEnd()
-            return [PSCustomObject]@{ ExitCode = $p.ExitCode; StandardOutput = $stdout; StandardError = $stderr }
+            return [PSCustomObject]@{
+                ExitCode = $p.ExitCode; StandardOutput = $stdout; StandardError = $stderr
+            }
         } catch {
-            throw "[$using:ScriptName - $using:FunctionName] Failed to start or monitor process '$($using:FilePath)'. Error: $_"
+            throw "Failed to start or monitor process '$($using:FilePath)'. Error: $_"
         } finally {
             if ($p) {
                 $p.Dispose()
             }
         }
-
-    } # Note: No -ArgumentList is used here.
-
-    # Log the full results to the Metascript log for excellent visibility.
+    }
     if ($result) {
-        Write-Host -ForegroundColor Green "[$ScriptName - $FunctionName] Command finished with Exit Code: $($result.ExitCode)."
+        Write-Host -ForegroundColor DarkYellow "[$ScriptName - $FunctionName] Command finished with Exit Code: $($result.ExitCode)."
         if (-not [string]::IsNullOrWhiteSpace($result.StandardOutput)) {
-            Write-Host -ForegroundColor Cyan "[$ScriptName - $FunctionName] --- Start Standard Output ---"
+            Write-Host -ForegroundColor DarkYellow "[$ScriptName - $FunctionName] --- Start Standard Output ---"
             Write-Host -ForegroundColor Green $result.StandardOutput
-            Write-Host -ForegroundColor Cyan "[$ScriptName - $FunctionName] --- End Standard Output ---"
+            Write-Host -ForegroundColor DarkYellow "[$ScriptName - $FunctionName] --- End Standard Output ---"
         }
         if (-not [string]::IsNullOrWhiteSpace($result.StandardError)) {
-            #Write-Warning "--- Start Standard Error ---"
-            #Write-Warning $result.StandardError
-            #Write-Warning "--- End Standard Error ---"
+            Write-Warning "[$ScriptName - $FunctionName] --- Start Standard Error ---"
+            Write-Warning $result.StandardError
+            Write-Warning "[$ScriptName - $FunctionName] --- End Standard Error ---"
         }
     }
-
     return $result
 }
 
