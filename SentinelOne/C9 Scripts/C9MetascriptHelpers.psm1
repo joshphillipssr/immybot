@@ -2174,28 +2174,20 @@ function Get-C9ComprehensiveSystemState {
     [CmdletBinding()]
     param()
 
-    # Announce the start of the entire data gathering process.
     Write-Host "==========================================================" -ForegroundColor Yellow
     Write-Host "--- BEGINNING ULTIMATE COMPREHENSIVE SYSTEM STATE ASSESSMENT ---" -ForegroundColor Yellow
 
-    # --- THIS IS THE FIX ---
+    # --- THIS IS THE PRIMARY FIX ---
     # We must import the module containing the S1-specific functions we need to call.
-    Import-Module C9SentinelOneMeta
+    Import-Module "C9SentinelOneMeta"
     
     $systemState = New-Object -TypeName PSObject
     
-    # --- The rest of this function is now an orchestration of QUIET helpers ---
-    $s1Status = Get-C9S1ComprehensiveStatus
-    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'S1Status' -Value $s1Status
-
-    $rebootReqs = Get-C9SystemRebootRequirements
-    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootRequirements' -Value $rebootReqs
-    
-    $userActivity = Get-C9UserActivityStatus
-    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'UserActivity' -Value $userActivity
-
-    $rebootPolicy = Get-C9RebootPolicyContext
-    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootPolicy' -Value $rebootPolicy
+    # --- This function now orchestrates QUIET helpers ---
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'S1Status' -Value (Get-C9S1ComprehensiveStatus)
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootRequirements' -Value (Get-C9SystemRebootRequirements)
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'UserActivity' -Value (Get-C9UserActivityStatus)
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootPolicy' -Value (Get-C9RebootPolicyContext)
     
     Write-Host "==========================================================" -ForegroundColor Yellow
     Write-Host "--- ULTIMATE COMPREHENSIVE SYSTEM STATE ASSESSMENT COMPLETE ---" -ForegroundColor Yellow

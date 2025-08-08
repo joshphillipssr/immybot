@@ -28,7 +28,7 @@ function Get-C9SentinelOneInfo {
     .EXAMPLE
         $s1Info = Get-C9SentinelOneInfo
         if ($s1Info) {
-            Write-Host "SentinelOne Version $($s1Info.Version) found at $($s1Info.InstallPath)"
+            # Write-Host "SentinelOne Version $($s1Info.Version) found at $($s1Info.InstallPath)"
         } else {
             Write-Error "SentinelOne agent not found."
         }
@@ -38,7 +38,7 @@ function Get-C9SentinelOneInfo {
 
     $FunctionName = "Get-C9SentinelOneInfo"
 
-    #Write-Host "[$ScriptName - $FunctionName] Querying endpoint for SentinelOne agent information..."
+    ## Write-Host "[$ScriptName - $FunctionName] Querying endpoint for SentinelOne agent information..."
 
     # This single Invoke-ImmyCommand call gathers all info from the endpoint in one go.
     $infoObject = Invoke-ImmyCommand -ScriptBlock {
@@ -86,7 +86,7 @@ function Get-C9SentinelOneInfo {
 
     # Log the outcome and return the object (or $null) to the calling script.
     if ($infoObject) {
-        #Write-Host "[$ScriptName - $FunctionName] Successfully retrieved SentinelOne agent info. Version: $($infoObject.Version)"
+        ## Write-Host "[$ScriptName - $FunctionName] Successfully retrieved SentinelOne agent info. Version: $($infoObject.Version)"
     } else {
         #Write-Warning "[$ScriptName - $FunctionName] Get-C9SentinelOneInfo did not find a valid agent installation on the endpoint."
     }
@@ -108,7 +108,7 @@ function Get-C9SentinelOneVersion {
     .EXAMPLE
         $installedVersion = Get-C9SentinelOneVersion
         if ($installedVersion) {
-            Write-Host "Detected SentinelOne Version: $installedVersion"
+            # Write-Host "Detected SentinelOne Version: $installedVersion"
         } else {
             Write-Warning "Could not detect an installed SentinelOne agent."
         }
@@ -119,7 +119,7 @@ function Get-C9SentinelOneVersion {
 
     $FunctionName = "Get-C9SentinelOneVersion"
 
-    Write-Host "[$ScriptName - $FunctionName] Attempting to get S1 version from endpoint..."
+    # Write-Host "[$ScriptName - $FunctionName] Attempting to get S1 version from endpoint..."
     
     # Use the standard "bridge" to run detection logic on the endpoint.
     $version = Invoke-ImmyCommand -ScriptBlock {
@@ -156,9 +156,9 @@ function Get-C9SentinelOneVersion {
     }
 
     if ($version) {
-        Write-Host "[$ScriptName - $FunctionName] Successfully retrieved version: $version"
+        # Write-Host "[$ScriptName - $FunctionName] Successfully retrieved version: $version"
     } else {
-        Write-Host "[$ScriptName - $FunctionName] SentinelOne agent not found or version could not be determined."
+        # Write-Host "[$ScriptName - $FunctionName] SentinelOne agent not found or version could not be determined."
     }
 
     return $version
@@ -188,15 +188,15 @@ function Get-C9S1EndpointData {
 
     try {
         # The #Requires statement above handles the import of our custom module.
-        # We can use Write-Host for high-level status messages that are always visible in ImmyBot logs.
-        Write-Host "[$ScriptName - $FunctionName] Executing SentinelOne Health 'Get' script."
-        Write-Host "[$ScriptName - $FunctionName] This script gathers raw data for inventory or for a 'Test' script to evaluate."
+        # We can use # Write-Host for high-level status messages that are always visible in ImmyBot logs.
+        # Write-Host "[$ScriptName - $FunctionName] Executing SentinelOne Health 'Get' script."
+        # Write-Host "[$ScriptName - $FunctionName] This script gathers raw data for inventory or for a 'Test' script to evaluate."
 
         # Call the master function from our module. It handles all its own detailed logging.
         # The output of this function is the final return value of this script.
         $healthReport = Get-C9S1LocalHealthReport
 
-        Write-Host "[$ScriptName - $FunctionName] Successfully generated health report. Returning data object."
+        # Write-Host "[$ScriptName - $FunctionName] Successfully generated health report. Returning data object."
         
         # Returning the object is the last action. ImmyBot will capture this.
         return $healthReport
@@ -224,7 +224,7 @@ function Get-C9SentinelCtl {
         [string]$Command
     )
 
-    # Execution logic - this remains the same but without the Write-Host calls.
+    # Execution logic - this remains the same but without the # Write-Host calls.
     $s1Info = Get-C9SentinelOneInfo
     if (-not $s1Info -or -not $s1Info.SentinelCtlPath) {
         # We return $null on failure; the caller will see this and can log the error.
@@ -293,7 +293,7 @@ function Test-C9S1LocalUpgradeAuthorization {
     $FunctionName = "Test-C9S1LocalUpgradeAuthorization"
 
     $endpoint = "agents/$AgentId/local-upgrade-authorization"
-    Write-Host "[$ScriptName - $FunctionName] Checking API endpoint '$endpoint' for agent protection status."
+    # Write-Host "[$ScriptName - $FunctionName] Checking API endpoint '$endpoint' for agent protection status."
 
     try {
         # We expect a successful call to return data with an 'enabled' property.
@@ -301,10 +301,10 @@ function Test-C9S1LocalUpgradeAuthorization {
         
         # The API returns { "data": { "enabled": true/false } } on success
         if ($null -ne $response.enabled -and $response.enabled) {
-            Write-Host "[$ScriptName - $FunctionName] API Response: Local upgrade authorization is ENABLED."
+            # Write-Host "[$ScriptName - $FunctionName] API Response: Local upgrade authorization is ENABLED."
             return $true
         } else {
-            Write-Host "[$ScriptName - $FunctionName] API Response: Local upgrade authorization is DISABLED."
+            # Write-Host "[$ScriptName - $FunctionName] API Response: Local upgrade authorization is DISABLED."
             return $false
         }
     } catch {
@@ -328,7 +328,7 @@ function Test-S1InstallPreFlight {
 
     $FunctionName = "Test-S1InstallPreFlight"
 
-    Write-Host "[$ScriptName - $FunctionName] Starting SentinelOne installation pre-flight check..."
+    # Write-Host "[$ScriptName - $FunctionName] Starting SentinelOne installation pre-flight check..."
 
     try {
         # Step 1: Get the local agent ID using our dedicated bridge function.
@@ -422,15 +422,15 @@ function Resolve-InstallerAvailable {
     } -ArgumentList $destinationPath
     
     if ($fileExists) {
-        Write-Host "[$ScriptName - $FunctionName] File '$FileName' already exists in staging directory. Skipping download."
+        # Write-Host "[$ScriptName - $FunctionName] File '$FileName' already exists in staging directory. Skipping download."
         return $destinationPath
     }
 
     # If it doesn't exist, download it. This runs in the Metascript context.
-    Write-Host "[$ScriptName - $FunctionName] [RESOLVE] Downloading '$FileName' to endpoint path '$destinationPath'..."
+    # Write-Host "[$ScriptName - $FunctionName] [RESOLVE] Downloading '$FileName' to endpoint path '$destinationPath'..."
     # The '-Headers' parameter is the critical addition for authenticated downloads.
     Download-File -Url $DownloadUrl -OutFile $destinationPath -Headers $AuthHeader
-    Write-Host "[$ScriptName - $FunctionName] [RESOLVE] SUCCESS: File downloaded."
+    # Write-Host "[$ScriptName - $FunctionName] [RESOLVE] SUCCESS: File downloaded."
     return $destinationPath
 }
 
@@ -457,14 +457,14 @@ function Set-C9SentinelOneUnprotect {
     $FunctionName = "Set-C9SentinelOneUnprotect"
 
     # Step 1: Find the agent using our helper function
-    Write-Host "[$ScriptName - $FunctionName] Attempting to locate the SentinelOne agent..."
+    # Write-Host "[$ScriptName - $FunctionName] Attempting to locate the SentinelOne agent..."
     $s1Info = Get-C9SentinelOneInfo
     if (-not $s1Info) {
         throw "Cannot unprotect agent: SentinelOne agent was not found on the endpoint."
     }
 
     # Step 2: Prepare and execute the command using our robust command wrapper
-    Write-Host "[$ScriptName - $FunctionName] Disabling SentinelOne agent protection via sentinelctl..."
+    # Write-Host "[$ScriptName - $FunctionName] Disabling SentinelOne agent protection via sentinelctl..."
     $argumentList = "unprotect", "-k", $Passphrase
     $result = Invoke-C9EndpointCommand -FilePath $s1Info.SentinelCtlPath -ArgumentList $argumentList
 
@@ -480,7 +480,7 @@ function Set-C9SentinelOneUnprotect {
     
     # Step 4: Final validation
     if ($result.StandardOutput -match 'Protection is off|Protection disabled') {
-        Write-Host "[$ScriptName - $FunctionName] [SUCCESS] SentinelOne agent protection has been successfully disabled."
+        # Write-Host "[$ScriptName - $FunctionName] [SUCCESS] SentinelOne agent protection has been successfully disabled."
         return $true
     } else {
         throw "Unprotect command completed, but success could not be verified from the output. Output: $($result.StandardOutput)"
@@ -515,7 +515,7 @@ function Get-C9S1ServiceState {
     param()
 
     # --- We're making this function quiet, as per our last fix ---
-    # Write-Host ...
+    # # Write-Host ...
 
     $serviceReportList = Invoke-ImmyCommand -ScriptBlock {
         $serviceNames = @(
@@ -636,25 +636,25 @@ function Get-C9ComprehensiveSystemState {
     param()
 
     # Announce the start of the entire data gathering process.
-    Write-Host "==========================================================" -ForegroundColor Yellow
-    Write-Host "--- BEGINNING ULTIMATE COMPREHENSIVE SYSTEM STATE ASSESSMENT ---" -ForegroundColor Yellow
+    # Write-Host "==========================================================" -ForegroundColor Yellow
+    # Write-Host "--- BEGINNING ULTIMATE COMPREHENSIVE SYSTEM STATE ASSESSMENT ---" -ForegroundColor Yellow
 
     # Initialize the final, all-encompassing state object.
     $systemState = New-Object -TypeName PSObject
 
     # --- Step 1: Get S1 Agent Status ---
     # Announce, then call the quiet function.
-    Write-Host "`n--- Gathering S1 Agent Status... ---" -ForegroundColor Cyan
+    # Write-Host "`n--- Gathering S1 Agent Status... ---" -ForegroundColor Cyan
     $s1Status = Get-C9S1ComprehensiveStatus
     Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'S1Status' -Value $s1Status
 
     # --- Step 2: Get Pending Reboot Status ---
-    Write-Host "`n--- Gathering Pending Reboot Requirements... ---" -ForegroundColor Cyan
+    # Write-Host "`n--- Gathering Pending Reboot Requirements... ---" -ForegroundColor Cyan
     $rebootReqs = Get-C9SystemRebootRequirements
     Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootRequirements' -Value $rebootReqs
     
     # --- Step 3: Get User Activity Status ---
-    Write-Host "`n--- Gathering User Activity Status... ---" -ForegroundColor Cyan
+    # Write-Host "`n--- Gathering User Activity Status... ---" -ForegroundColor Cyan
     $userActivity = Get-C9UserActivityStatus
     Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'UserActivity' -Value $userActivity
 
@@ -662,8 +662,8 @@ function Get-C9ComprehensiveSystemState {
     $rebootPolicy = Get-C9RebootPolicyContext
     Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootPolicy' -Value $rebootPolicy
     
-    Write-Host "==========================================================" -ForegroundColor Yellow
-    Write-Host "--- ULTIMATE COMPREHENSIVE SYSTEM STATE ASSESSMENT COMPLETE ---" -ForegroundColor Yellow
+    # Write-Host "==========================================================" -ForegroundColor Yellow
+    # Write-Host "--- ULTIMATE COMPREHENSIVE SYSTEM STATE ASSESSMENT COMPLETE ---" -ForegroundColor Yellow
     
     # Return the final, all-encompassing object.
     return $systemState
