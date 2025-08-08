@@ -48,7 +48,6 @@ function Get-C9ComputerLockedStatus {
     }
 
     try {
-        # --- REFACTORED LOGIC ---
         # Step 1: Use the new caching function to get reliable session information.
         Write-Host "[$ScriptName - $FunctionName] Getting user session information from Quser cache..."
         $quserResult = Get-C9QuserResult -Computer $Computer
@@ -61,14 +60,12 @@ function Get-C9ComputerLockedStatus {
                 Write-Host "[$ScriptName - $FunctionName] Cached quser data confirms no users are logged on"
                 $result.LockStatus = "LoggedOut"
                 $result.SystemContextLockStatus = "LoggedOut"
-                return New-Object -TypeName PSObject -Property
-                $result
+                return New-Object -TypeName PSObject -Property $result
             } else {
                 Write-Warning "[$ScriptName - $FunctionName] Cached quser data indicates failure (Exit Code: $($quserResult.ExitCode))"
                 $result.DataSource = "Error - quser failed"
                 $result.LockStatus = "Unknown"
-                return New-Object -TypeName PSObject -Property
-                $result
+                return New-Object -TypeName PSObject -Property $result
             }
         }
 
@@ -1987,15 +1984,15 @@ function Invoke-C9EndpointCommand {
 
     $FunctionName = "Invoke-C9EndpointCommand"
 
-    Write-Host "[$ScriptName - $FunctionName] Preparing to execute '$FilePath' with arguments: $($ArgumentList -join ' ')"
+    #Write-Host "[$ScriptName - $FunctionName] Preparing to execute '$FilePath' with arguments: $($ArgumentList -join ' ')"
 
     # We use the $using: scope modifier to reliably pass variables into the script block,
     # bypassing the unreliable -ArgumentList parameter binding mechanism.
     $result = Invoke-ImmyCommand -Computer $Computer -Timeout $TimeoutSeconds -ScriptBlock {
         
         # We do not use a param() block here; we access the variables directly via $using:
-        Write-Host "[$using:ScriptName - $using:FunctionName] Endpoint received command: '$($using:FilePath)'"
-        Write-Host "[$using:ScriptName - $using:FunctionName] Endpoint received argument: '$($using:ArgumentList -join ' ')'"
+        #Write-Host "[$using:ScriptName - $using:FunctionName] Endpoint received command: '$($using:FilePath)'"
+        #Write-Host "[$using:ScriptName - $using:FunctionName] Endpoint received argument: '$($using:ArgumentList -join ' ')'"
         
         if (-not (Test-Path -Path $using:FilePath -PathType Leaf)) {
             throw "[$using:ScriptName - $using:FunctionName] Executable not found at path: $($using:FilePath)"
@@ -2007,7 +2004,7 @@ function Invoke-C9EndpointCommand {
         }
         $argumentString = $formattedArgs -join ' '
 
-        Write-Host "[$using:ScriptName - $using:FunctionName] Executing: `"$($using:FilePath)`" $argumentString"
+        #Write-Host "[$using:ScriptName - $using:FunctionName] Executing: `"$($using:FilePath)`" $argumentString"
 
         $pinfo = New-Object System.Diagnostics.ProcessStartInfo
         $pinfo.FileName = $using:FilePath
@@ -2042,16 +2039,16 @@ function Invoke-C9EndpointCommand {
 
     # Log the full results to the Metascript log for excellent visibility.
     if ($result) {
-        Write-Host -ForegroundColor Green "[$ScriptName - $FunctionName] Command finished with Exit Code: $($result.ExitCode)."
+        #Write-Host -ForegroundColor Green "[$ScriptName - $FunctionName] Command finished with Exit Code: $($result.ExitCode)."
         if (-not [string]::IsNullOrWhiteSpace($result.StandardOutput)) {
-            Write-Host -ForegroundColor Cyan "[$ScriptName - $FunctionName] --- Start Standard Output ---"
-            Write-Host -ForegroundColor Green $result.StandardOutput
-            Write-Host -ForegroundColor Cyan "[$ScriptName - $FunctionName] --- End Standard Output ---"
+            #Write-Host -ForegroundColor Cyan "[$ScriptName - $FunctionName] --- Start Standard Output ---"
+            #Write-Host -ForegroundColor Green $result.StandardOutput
+            #Write-Host -ForegroundColor Cyan "[$ScriptName - $FunctionName] --- End Standard Output ---"
         }
         if (-not [string]::IsNullOrWhiteSpace($result.StandardError)) {
-            Write-Warning "--- Start Standard Error ---"
-            Write-Warning $result.StandardError
-            Write-Warning "--- End Standard Error ---"
+            #Write-Warning "--- Start Standard Error ---"
+            #Write-Warning $result.StandardError
+            #Write-Warning "--- End Standard Error ---"
         }
     }
 
@@ -2167,6 +2164,43 @@ function Format-C9ObjectForDisplay {
     }
 
     return $displayRows
+}
+
+function Get-C9ComprehensiveSystemState {
+    <#
+    .SYNOPSIS
+        (Ultimate Get Orchestrator) Gathers all necessary state data from an endpoint.
+    #>
+    [CmdletBinding()]
+    param()
+
+    # Announce the start of the entire data gathering process.
+    Write-Host "==========================================================" -ForegroundColor Yellow
+    Write-Host "--- BEGINNING ULTIMATE COMPREHENSIVE SYSTEM STATE ASSESSMENT ---" -ForegroundColor Yellow
+
+    # --- THIS IS THE FIX ---
+    # We must import the module containing the S1-specific functions we need to call.
+    Import-Module C9SentinelOneMeta
+    
+    $systemState = New-Object -TypeName PSObject
+    
+    # --- The rest of this function is now an orchestration of QUIET helpers ---
+    $s1Status = Get-C9S1ComprehensiveStatus
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'S1Status' -Value $s1Status
+
+    $rebootReqs = Get-C9SystemRebootRequirements
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootRequirements' -Value $rebootReqs
+    
+    $userActivity = Get-C9UserActivityStatus
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'UserActivity' -Value $userActivity
+
+    $rebootPolicy = Get-C9RebootPolicyContext
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootPolicy' -Value $rebootPolicy
+    
+    Write-Host "==========================================================" -ForegroundColor Yellow
+    Write-Host "--- ULTIMATE COMPREHENSIVE SYSTEM STATE ASSESSMENT COMPLETE ---" -ForegroundColor Yellow
+    
+    return $systemState
 }
 
 Export-ModuleMember -Function *

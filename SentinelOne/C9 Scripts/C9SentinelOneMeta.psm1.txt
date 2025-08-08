@@ -38,7 +38,7 @@ function Get-C9SentinelOneInfo {
 
     $FunctionName = "Get-C9SentinelOneInfo"
 
-    Write-Host "[$ScriptName - $FunctionName] Querying endpoint for SentinelOne agent information..."
+    #Write-Host "[$ScriptName - $FunctionName] Querying endpoint for SentinelOne agent information..."
 
     # This single Invoke-ImmyCommand call gathers all info from the endpoint in one go.
     $infoObject = Invoke-ImmyCommand -ScriptBlock {
@@ -86,51 +86,12 @@ function Get-C9SentinelOneInfo {
 
     # Log the outcome and return the object (or $null) to the calling script.
     if ($infoObject) {
-        Write-Host "[$ScriptName - $FunctionName] Successfully retrieved SentinelOne agent info. Version: $($infoObject.Version)"
+        #Write-Host "[$ScriptName - $FunctionName] Successfully retrieved SentinelOne agent info. Version: $($infoObject.Version)"
     } else {
-        Write-Warning "[$ScriptName - $FunctionName] Get-C9SentinelOneInfo did not find a valid agent installation on the endpoint."
+        #Write-Warning "[$ScriptName - $FunctionName] Get-C9SentinelOneInfo did not find a valid agent installation on the endpoint."
     }
     
     return $infoObject
-}
-
-function Get-C9S1LocalAgentId {
-    [CmdletBinding()]
-    param()
-
-    $FunctionName = "Get-C9S1LocalAgentId"
-
-    Write-Host "[$ScriptName - $FunctionName] Attempting to retrieve SentinelOne Agent ID from the local endpoint."
-    try {
-        # This scriptblock runs on the endpoint as SYSTEM.
-        # It's self-contained and has one job: get the agent ID.
-        $result = Invoke-ImmyCommand -ScriptBlock {
-            # Use Resolve-Path for robustly finding the executable
-            $sentinelCtlPath = Resolve-Path "C:\Program Files\SentinelOne\Sentinel Agent*\SentinelCtl.exe" -ErrorAction SilentlyContinue
-            if (-not $sentinelCtlPath) {
-                Write-Warning "[$using:ScriptName - $using:FunctionName] SentinelCtl.exe not found on the endpoint."
-                # Return null explicitly if the exe isn't found
-                return $null
-            }
-            
-            # Execute the command to get the agent ID.
-            # We trim to ensure no leading/trailing whitespace.
-            $agentId = (& $sentinelCtlPath.Path agent_id).Trim()
-            return $agentId
-        }
-
-        if ([string]::IsNullOrWhiteSpace($result)) {
-            Write-Host "[$using:ScriptName - $using:FunctionName] No local Agent ID was found."
-            return $null
-        }
-
-        Write-Host "[$using:ScriptName - $using:FunctionName] Successfully retrieved local Agent ID: $result"
-        return $result
-    }
-    catch {
-        Write-Warning "[$ScriptName - $FunctionName] An error occurred while trying to retrieve the local Agent ID: $($_.Exception.Message)"
-        return $null
-    }
 }
 
 function Get-C9SentinelOneVersion {
@@ -216,7 +177,7 @@ function Get-C9S1EndpointData {
     .OUTPUTS
         [PSCustomObject] A detailed object containing the S1 agent's local health status.
     .NOTES
-        Author:     Josh Phillips (Consulting) & C9.AI
+        Author:     Josh Phillips
         Created:    07/15/2025
         Version:    2.0.0
     #>
@@ -248,81 +209,78 @@ function Get-C9S1EndpointData {
     }
 }
 
-function Get-C9SentinelOneStatus {
+function Get-C9SentinelCtl {
     <#
     .SYNOPSIS
-        (Refactored) A Metascript function that retrieves and parses the output of 'sentinelctl.exe status'.
+        (Specialist) A generic wrapper for executing sentinelctl.exe commands and returning a clean data report.
     .DESCRIPTION
-        This function locates sentinelctl.exe via Get-C9SentinelOneInfo and executes the 'status' command
-        using the robust Invoke-C9EndpointCommand wrapper. It parses the key-value output into a
-        structured object for easy analysis.
-    .OUTPUTS
-        A PSCustomObject containing parsed status data, or $null on failure.
+        This function runs any specified sentinelctl.exe command. It is "quiet" by design,
+        performing its work and returning a structured array of objects without verbose logging.
+        The calling script is responsible for logging the results.
     #>
     [CmdletBinding()]
-    param()
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Command
+    )
 
-    $FunctionName = "Get-C9SentinelOneStatus"
-    Write-Host "[$ScriptName - $FunctionName] Getting agent status via sentinelctl.exe..."
-
+    # Execution logic - this remains the same but without the Write-Host calls.
     $s1Info = Get-C9SentinelOneInfo
     if (-not $s1Info -or -not $s1Info.SentinelCtlPath) {
-        Write-Warning "[$ScriptName - $FunctionName] Cannot run 'status' command; SentinelCtl.exe path is unknown."
+        # We return $null on failure; the caller will see this and can log the error.
         return $null
     }
-
-    # =========================================================================
-    # --- BEGIN CORRECTED SECTION (Fix #1: $using scope) ---
-    # =========================================================================
-    # Assign the complex property to a simple variable first.
     $sentinelCtlPath = $s1Info.SentinelCtlPath
-
-    # Now, use the simple variable with the $using: modifier. This is safe.
     if (-not (Invoke-ImmyCommand -ScriptBlock { Test-Path $using:sentinelCtlPath })) {
-        Write-Warning "[$ScriptName - $FunctionName] SentinelCtl.exe not found at path: $($sentinelCtlPath)"
         return $null
     }
-    # =========================================================================
-    # --- END CORRECTED SECTION ---
-    # =========================================================================
-
-    # Use the simple variable for the command execution as well.
-    $ctlResult = Invoke-C9EndpointCommand -FilePath $sentinelCtlPath -ArgumentList "status"
     
-    if ($ctlResult.ExitCode -ne 0) {
-        Write-Warning "[$ScriptName - $FunctionName] 'sentinelctl.exe status' failed with Exit Code: $($ctlResult.ExitCode)."
-        # We still return the object, the exit code is valuable data.
-    }
-    
-    $outputLines = $ctlResult.StandardOutput -split '(?:\r\n|\r|\n)'
-    $statusData = [ordered]@{
-        # Add the raw execution results for deep diagnostics
-        ExitCode       = $ctlResult.ExitCode
-        RawOutput      = $ctlResult.StandardOutput
-        RawError       = $ctlResult.StandardError
-        # Add a property to explicitly state if the command ran successfully
-        IsHealthy      = ($ctlResult.ExitCode -eq 0)
-    }
+    $ctlResult = Invoke-C9EndpointCommand -FilePath $sentinelCtlPath -ArgumentList $Command
 
-    # =========================================================================
-    # --- BEGIN CORRECTED SECTION (Fix #2: Parsing Logic) ---
-    # =========================================================================
-    foreach ($line in $outputLines) {
-        # We only care about lines that are key:value pairs.
-        if ($line -like '*:*') {
-            $key, $value = $line.Split(':', 2).Trim()
-            # Make property name PowerShell-friendly by replacing spaces with underscores.
-            $propName = $key.Replace(' ', '_') 
-            $statusData[$propName] = $value
+    # Reporting logic - this remains the same.
+    $reportArray = @()
+
+    $exitCodeObject = New-Object -TypeName PSObject
+    Add-Member -InputObject $exitCodeObject -MemberType NoteProperty -Name 'Property' -Value 'Execution Exit Code'
+    Add-Member -InputObject $exitCodeObject -MemberType NoteProperty -Name 'Value' -Value "$($ctlResult.ExitCode)"
+    $reportArray += $exitCodeObject
+
+    $successObject = New-Object -TypeName PSObject
+    Add-Member -InputObject $successObject -MemberType NoteProperty -Name 'Property' -Value 'Execution Was Successful'
+    Add-Member -InputObject $successObject -MemberType NoteProperty -Name 'Value' -Value "$($ctlResult.ExitCode -eq 0)"
+    $reportArray += $successObject
+
+    switch ($Command) {
+        "status" {
+            $outputLines = $ctlResult.StandardOutput -split '(?:\r\n|\r|\n)'
+            foreach ($line in $outputLines) {
+                if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                $rowObject = New-Object -TypeName PSObject; $key = ""; $value = ""
+                if ($line -like '*:*') { $key, $value = $line.Split(':', 2) } 
+                elseif ($line -like '* is loaded') { $parts = $line -split ' is loaded'; $key = "$($parts[0]) State"; $value = "loaded" } 
+                elseif ($line -like '* is running as *') { $parts = $line -split ' is running as '; $key = "$($parts[0]) Running State"; $value = $parts[1] } 
+                else { $key = "Uncategorized Status"; $value = $line }
+                Add-Member -InputObject $rowObject -MemberType NoteProperty -Name 'Property' -Value $key.Trim()
+                Add-Member -InputObject $rowObject -MemberType NoteProperty -Name 'Value' -Value $value.Trim()
+                $reportArray += $rowObject
+            }
         }
-        # We no longer have an 'elseif' block. Lines without a colon are ignored.
+        "agent_id" {
+            $rowObject = New-Object -TypeName PSObject
+            Add-Member -InputObject $rowObject -MemberType NoteProperty -Name 'Property' -Value 'Agent ID'
+            Add-Member -InputObject $rowObject -MemberType NoteProperty -Name 'Value' -Value $ctlResult.StandardOutput.Trim()
+            $reportArray += $rowObject
+        }
+        default {
+            $rowObject = New-Object -TypeName PSObject
+            Add-Member -InputObject $rowObject -MemberType NoteProperty -Name 'Property' -Value "Output from '$Command'"
+            Add-Member -InputObject $rowObject -MemberType NoteProperty -Name 'Value' -Value $ctlResult.StandardOutput.Trim()
+            $reportArray += $rowObject
+        }
     }
-    # =========================================================================
-    # --- END CORRECTED SECTION ---
-    # =========================================================================
-
-    Write-Host "[$ScriptName - $FunctionName] Successfully parsed sentinelctl status."
-    return New-Object -TypeName PSObject -Property $statusData
+    
+    # The function's final action is to return the clean data object.
+    return $reportArray
 }
 
 function Test-C9S1LocalUpgradeAuthorization {
@@ -545,45 +503,66 @@ function Set-C9SentinelOneProtect {
 function Get-C9S1ServiceState {
     <#
     .SYNOPSIS
-        (Specialist) Checks the existence and status of the four core SentinelOne services.
+        (Specialist) Gets the existence and running state of the four core S1 services.
+    .DESCRIPTION
+        This function reports which of the four core S1 services exist and, if they
+        do exist, what their current running state is. It returns an array of objects
+        with clear 'Existence' and 'RunningState' properties for unambiguous analysis.
     .OUTPUTS
-        A PSCustomObject with boolean properties for the existence and running state of each service.
+        An array of PSCustomObjects, with 'Service', 'Existence', and 'RunningState' properties.
     #>
     [CmdletBinding()]
     param()
 
-    $FunctionName = "Get-C9S1ServiceState"
-    Write-Host "[$ScriptName - $FunctionName] Checking state of all S1-related Windows services..."
+    # --- We're making this function quiet, as per our last fix ---
+    # Write-Host ...
 
-    $serviceState = Invoke-ImmyCommand -ScriptBlock {
+    $serviceReportList = Invoke-ImmyCommand -ScriptBlock {
         $serviceNames = @(
             "SentinelAgent",
             "SentinelHelperService",
             "SentinelStaticEngine",
             "LogProcessorService"
         )
-        $report = [ordered]@{}
+        
+        $reportArray = @()
+
         foreach ($name in $serviceNames) {
             $service = Get-Service -Name $name -ErrorAction SilentlyContinue
-            $report["Exists_$($name)"] = ($null -ne $service)
-            $report["IsRunning_$($name)"] = ($null -ne $service -and $service.Status -eq 'Running')
+            
+            # --- NEW, MORE DESCRIPTIVE LOGIC ---
+            $existence = if ($null -ne $service) { "Exists" } else { "Not Found" }
+            $runningState = if ($null -ne $service) { $service.Status.ToString() } else { "N/A" }
+            
+            # Create a new custom object with the clear, unambiguous properties.
+            # Using the ConstrainedLanguage-safe pattern.
+            $serviceObject = New-Object -TypeName PSObject
+            Add-Member -InputObject $serviceObject -MemberType NoteProperty -Name 'Service' -Value $name
+            Add-Member -InputObject $serviceObject -MemberType NoteProperty -Name 'Existence' -Value $existence
+            Add-Member -InputObject $serviceObject -MemberType NoteProperty -Name 'RunningState' -Value $runningState
+            
+            $reportArray += $serviceObject
         }
-        return [PSCustomObject]$report
+        return $reportArray
     }
 
-    Write-Host "[$ScriptName - $FunctionName] Service state check complete."
-    return $serviceState
+    # The function is quiet and just returns the data.
+    return $serviceReportList
 }
 
 function Get-C9S1InstallDirectoryState {
     <#
     .SYNOPSIS
-        (Specialist) Checks the health of the SentinelOne installation directory.
+        (Specialist) Performs an exhaustive file system state check for all S1 installations.
     .DESCRIPTION
-        This function verifies the existence of the installation folder and critical files within it,
-        such as SentinelAgent.exe and SentinelCtl.exe.
+        This function identifies the parent Sentinel* folder and all of its children. It distinguishes
+        between the "active" installation folder and any other (potentially orphaned) folders. It provides
+        a file count for both the active folder and a sum of all other folders, which is a key
+        diagnostic indicator for parallel/broken installations.
+    .PARAMETER InstallPath
+        The installation path of the currently active agent.
     .OUTPUTS
-        A PSCustomObject detailing the state of the installation directory.
+        An array of PSCustomObjects, formatted to produce a clean, vertical diagnostic report.
     #>
     [CmdletBinding()]
     param(
@@ -591,112 +570,103 @@ function Get-C9S1InstallDirectoryState {
         [string]$InstallPath
     )
 
-    $FunctionName = "Get-C9S1InstallDirectoryState"
-    Write-Host "[$ScriptName - $FunctionName] Checking health of install directory: '$InstallPath'..."
+    # This function is quiet. The calling script will do the logging.
 
-    # =========================================================================
-    # --- BEGIN CORRECTED SECTION ---
-    # =========================================================================
-    # We now call Invoke-ImmyCommand WITHOUT -ArgumentList and WITHOUT a param() block inside.
-    # We will use the $using: scope modifier, which is the proven, reliable pattern.
-    $dirState = Invoke-ImmyCommand -ScriptBlock {
-        # The 'param($path)' line has been removed.
+    $dirStateReport = Invoke-ImmyCommand -ScriptBlock {
+        # Access the active install path from the calling Metascript context
+        $activeInstallPath = $using:InstallPath
 
-        # We now access the Metascript's $InstallPath variable directly using $using:
-        $agentExe = Join-Path -Path $using:InstallPath -ChildPath "SentinelAgent.exe"
-        $ctlExe = Join-Path -Path $using:InstallPath -ChildPath "SentinelCtl.exe"
+        $reportArray = @()
 
-        $report = [ordered]@{
-            DirectoryExists      = Test-Path -Path $using:InstallPath -PathType Container
-            SentinelAgentExists  = Test-Path -Path $agentExe -PathType Leaf
-            SentinelCtlExists    = Test-Path -Path $ctlExe -PathType Leaf
+        # --- NEW, INTELLIGENT PARSING LOGIC ---
+        try {
+            # Find the parent folder (e.g., C:\Program Files\SentinelOne)
+            $parentDir = Split-Path -Path $activeInstallPath -Parent
+            # Get the name of the active child folder (e.g., Sentinel Agent 24.2.3.471)
+            $activeChildName = Split-Path -Path $activeInstallPath -Leaf
+
+            # Get all child directories inside the parent
+            $allChildDirs = Get-ChildItem -Path $parentDir -Directory -ErrorAction SilentlyContinue
+
+            # Isolate the "other" (potentially orphaned) directories
+            $otherChildDirs = $allChildDirs | Where-Object { $_.Name -ne $activeChildName }
+
+            # Get file counts
+            $activeFolderFileCount = (Get-ChildItem -Path $activeInstallPath -File -Recurse -ErrorAction SilentlyContinue).Count
+            $otherFoldersFileCount = 0
+            if ($otherChildDirs) {
+                foreach ($otherDir in $otherChildDirs) {
+                    $otherFoldersFileCount += (Get-ChildItem -Path $otherDir.FullName -File -Recurse -ErrorAction SilentlyContinue).Count
+                }
+            }
+
+            # --- Build the report using the user's desired format ---
+            $row1 = New-Object -TypeName PSObject; Add-Member -InputObject $row1 'Property' 'Installation Folder (Parent)'; Add-Member -InputObject $row1 'Value' $parentDir; $reportArray += $row1
+            $row2 = New-Object -TypeName PSObject; Add-Member -InputObject $row2 'Property' 'Install Folder (Child)'; Add-Member -InputObject $row2 'Value' $activeChildName; $reportArray += $row2
+            $row3 = New-Object -TypeName PSObject; Add-Member -InputObject $row3 'Property' 'Number of additional child folders'; Add-Member -InputObject $row3 'Value' "$($otherChildDirs.Count)"; $reportArray += $row3
+            $row4 = New-Object -TypeName PSObject; Add-Member -InputObject $row4 'Property' 'Install Folder Total Files'; Add-Member -InputObject $row4 'Value' "$($activeFolderFileCount)"; $reportArray += $row4
+            $row5 = New-Object -TypeName PSObject; Add-Member -InputObject $row5 'Property' 'Other Child Folder Total Files'; Add-Member -InputObject $row5 'Value' "$($otherFoldersFileCount)"; $reportArray += $row5
+
+        } catch {
+            # If any part of the file system analysis fails, return a clear error row.
+            $errorRow = New-Object -TypeName PSObject
+            Add-Member -InputObject $errorRow 'Property' 'FileSystem Analysis'
+            Add-Member -InputObject $errorRow 'Value' "Error: $($_.Exception.Message)"
+            $reportArray += $errorRow
         }
-        # Define "healthy" as the directory and both key executables existing.
-        $report['IsHealthy'] = ($report.DirectoryExists -and $report.SentinelAgentExists -and $report.SentinelCtlExists)
+        
+        return $reportArray
+    }
 
-        return [PSCustomObject]$report
-    } # Note: The -ArgumentList parameter has been removed.
-    # =========================================================================
-    # --- END CORRECTED SECTION ---
-    # =========================================================================
-
-    Write-Host "[$ScriptName - $FunctionName] Directory health check complete. IsHealthy: $($dirState.IsHealthy)."
-    return $dirState
+    return $dirStateReport
 }
 
-function Get-C9S1ComprehensiveStatus {
+function Get-C9ComprehensiveSystemState {
     <#
     .SYNOPSIS
-        (Orchestrator) Gathers a complete, multi-point status report for the SentinelOne agent.
+        (Ultimate Get Orchestrator) Gathers all necessary state data from an endpoint.
     .DESCRIPTION
-        This is the new master "Get" function. It orchestrates calls to multiple specialist functions
-        to collect information from WMI, the file system, and sentinelctl.exe. It assembles all
-        data into a single, rich object for high-level decision making.
-    .OUTPUTS
-        A single, rich PSCustomObject containing a full health and status report of the agent.
+        This is the single, definitive function for gathering the complete state of an endpoint for
+        our software management workflows. It orchestrates calls to the domain-specific master "Get"
+        functions (for S1, Reboot Requirements, and User Activity) and assembles their reports
+        into one final, all-encompassing data object. This is the first function any Test/Set
+        script should call.
     #>
     [CmdletBinding()]
     param()
 
-    $FunctionName = "Get-C9S1ComprehensiveStatus"
-    Write-Host "================================================================="
-    Write-Host "[$ScriptName - $FunctionName] BEGINNING COMPREHENSIVE S1 STATUS CHECK"
-    Write-Host "================================================================="
+    # Announce the start of the entire data gathering process.
+    Write-Host "==========================================================" -ForegroundColor Yellow
+    Write-Host "--- BEGINNING ULTIMATE COMPREHENSIVE SYSTEM STATE ASSESSMENT ---" -ForegroundColor Yellow
 
-    # Initialize the final report object with a predictable structure.
-    $report = [ordered]@{
-        IsPresentAnywhere   = $false # Formerly IsPresent
-        IsConsideredHealthy = $false
-        AgentDetails        = $null # Formerly BaseInfo
-        WindowsServicesState= $null # Formerly ServiceState
-        InstallFolderState  = $null # Formerly DirectoryState
-        SentinelCtlStatus   = $null
-        VersionFromService  = $null
-        VersionFromCtl      = $null
-    }
+    # Initialize the final, all-encompassing state object.
+    $systemState = New-Object -TypeName PSObject
 
-    # 1. Get base info (service, paths, version). This is our starting point.
-    $report.AgentDetails = Get-C9SentinelOneInfo
-    $report.VersionFromService = $report.AgentDetails.Version
+    # --- Step 1: Get S1 Agent Status ---
+    # Announce, then call the quiet function.
+    Write-Host "`n--- Gathering S1 Agent Status... ---" -ForegroundColor Cyan
+    $s1Status = Get-C9S1ComprehensiveStatus
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'S1Status' -Value $s1Status
 
-    # If AgentDetails is null, the agent isn't installed in a detectable way. We can stop.
-    if (-not $report.AgentDetails) {
-        Write-Warning "[$ScriptName - $FunctionName] Primary check (Get-C9SentinelOneInfo) found no agent. Status check cannot proceed further."
-        $report.IsPresent = $false
-        return New-Object -TypeName PSObject -Property $report
-    }
-
-    $report.IsPresent = $true
-    Write-Host "[$ScriptName - $FunctionName] Agent is present. Version (from Service): $($report.VersionFromService). Continuing checks..."
-
-    # 2. Get the state of all four services.
-    $report.ServiceState = Get-C9S1ServiceState
-
-    # 3. Get the state of the installation directory.
-    $report.DirectoryState = Get-C9S1InstallDirectoryState -InstallPath $report.BaseInfo.InstallPath
+    # --- Step 2: Get Pending Reboot Status ---
+    Write-Host "`n--- Gathering Pending Reboot Requirements... ---" -ForegroundColor Cyan
+    $rebootReqs = Get-C9SystemRebootRequirements
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootRequirements' -Value $rebootReqs
     
-    # 4. Get the detailed status from sentinelctl.exe.
-    $report.SentinelCtlStatus = Get-C9SentinelOneStatus
+    # --- Step 3: Get User Activity Status ---
+    Write-Host "`n--- Gathering User Activity Status... ---" -ForegroundColor Cyan
+    $userActivity = Get-C9UserActivityStatus
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'UserActivity' -Value $userActivity
+
+    # The platform reboot policy is simple enough to gather here directly.
+    $rebootPolicy = Get-C9RebootPolicyContext
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootPolicy' -Value $rebootPolicy
     
-    # 5. Extract the version from the sentinelctl output for easy comparison.
-    if ($report.SentinelCtlStatus -and $report.SentinelCtlStatus.Monitor_Build_id) {
-        $report.VersionFromCtl = ($report.SentinelCtlStatus.Monitor_Build_id -split '\+')[0].Trim()
-    }
+    Write-Host "==========================================================" -ForegroundColor Yellow
+    Write-Host "--- ULTIMATE COMPREHENSIVE SYSTEM STATE ASSESSMENT COMPLETE ---" -ForegroundColor Yellow
     
-    # 6. Define the final "IsConsideredHealthy" summary status based on our findings.
-    # This is where we codify our definition of a healthy agent.
-    $isHealthy = ($report.AgentDetails -and 
-                  $report.ServiceState.IsRunning_SentinelAgent -and 
-                  $report.DirectoryState.IsHealthy -and
-                  $report.SentinelCtlStatus.IsHealthy -and
-                  ($report.VersionFromService -eq $report.VersionFromCtl))
-
-    $report.IsConsideredHealthy = $isHealthy
-
-    Write-Host "[$ScriptName - $FunctionName] FINAL HEALTH STATUS: $($report.IsConsideredHealthy)"
-    Write-Host "================================================================="
-
-    return New-Object -TypeName PSObject -Property $report
+    # Return the final, all-encompassing object.
+    return $systemState
 }
 
 Export-ModuleMember -Function *

@@ -1,10 +1,3 @@
-# =================================================================================
-# Name:     C9SP-SentinelOne-Test Script
-# Author:   Josh Phillips
-# Contact:  josh@c9cg.com
-# Docs:     https://immydocs.c9cg.com
-# =================================================================================
-
 param([string]$rebootPreference)
 
 $forceNullFlagFile = "C:\ProgramData\ImmyBot\S1\s1_is_null.txt"
@@ -13,84 +6,93 @@ if (Test-FilePath -Path $forceNullFlagFile) {
     return $false
 }
 
+# --- THIS IS THE FIX ---
+# Import ALL modules needed for the entire script's operation.
 Import-Module "C9MetascriptHelpers"
 Import-Module "C9SentinelOneMeta"
 
 # =========================================================================
-# --- Phase 0: Ultimate Comprehensive Status Assessment ---
+# --- Phase 0: The Ultimate Get ---
 # =========================================================================
-# This script now gathers ALL state data upfront, just like the Uninstall script.
-# This ensures consistency and prevents redundant data gathering calls.
+# This phase now correctly uses functions from BOTH modules.
 if ($null -eq $script:systemState) {
-    Write-Host "[$ScriptName] Phase 0: Performing ultimate comprehensive status assessment..."
-    
-    $script:systemState = New-Object -TypeName PSObject
-    Add-Member -InputObject $script:systemState -MemberType NoteProperty -Name 'S1Status' -Value (Get-C9S1ComprehensiveStatus)
-    Add-Member -InputObject $script:systemState -MemberType NoteProperty -Name 'RebootPolicy' -Value (Get-C9RebootPolicyContext)
-    Add-Member -InputObject $script:systemState -MemberType NoteProperty -Name 'UserActivity' -Value (Get-C9UserActivityStatus)
-    Add-Member -InputObject $script:systemState -MemberType NoteProperty -Name 'RebootRequirements' -Value (Get-C9SystemRebootRequirements)
-
-    $formattedStatus = Format-C9ObjectForDisplay -InputObject $script:systemState | Format-Table -AutoSize | Out-String
-    Write-Host "----------------- COMPREHENSIVE SYSTEM STATE -----------------"
-    Write-Host $formattedStatus -ForegroundColor Cyan 
-    Write-Host "------------------------------------------------------------"
-
-    Write-Host "[$ScriptName] Phase 0 Complete. System state has been captured."
+    $script:systemState = Get-C9ComprehensiveSystemState
 } else {
-    Write-Host "[$ScriptName] Phase 0: Resuming with persisted system state from before reboot."
+    Write-Host "[$ScriptName] Resuming with persisted system state from before reboot."
 }
+
+# --- For diagnostics, let's log the key reports we gathered ---
+Write-Host "`n--- Top-Level S1 Summary ---" -ForegroundColor Cyan
+$summaryObject = [ordered]@{ "Agent Is Present" = $script:systemState.S1Status.IsPresentAnywhere; "Version (Service)" = $script:systemState.S1Status.VersionFromService; "Version (sentinelctl)"= $script:systemState.S1Status.VersionFromCtl; "Agent ID" = $script:systemState.S1Status.AgentId }; New-Object -TypeName PSObject -Property $summaryObject | Format-List
+Write-Host "`n--- S1 Install Directory Report ---" -ForegroundColor Cyan
+$script:systemState.S1Status.InstallDirectoryReport | Format-Table -AutoSize
+Write-Host "`n--- S1 Services Report ---" -ForegroundColor Cyan
+$script:systemState.S1Status.ServicesReport | Format-Table -AutoSize
+Write-Host "`n--- Reboot Requirements Report ---" -ForegroundColor Cyan
+# The RebootRequirements object from the helpers module is now "quiet" and flat, so Format-List is best.
+$script:systemState.RebootRequirements | Format-List
 
 # =========================================================================
 # --- Phase 1: Pre-Flight Safety Checks ---
 # =========================================================================
-Write-Host "[$ScriptName] Phase 1: Performing pre-flight safety checks..."
-try {
-    Test-C9MsiExecMutex
-    Write-Host "[$ScriptName] [PASS] MSI Mutex is available."
-} catch {
-    throw "[$ScriptName] Pre-flight check failed: A conflicting MSI installation is in progress."
-}
-
-# --- This decision logic now uses the pre-gathered state ---
-Write-Host "[$ScriptName] [DECISION] Evaluating pending reboot clearance using comprehensive decision logic..."
+# This logic is unchanged and now consumes the data from our Get object.
+Write-Host "`n[$ScriptName] Phase 1: Performing pre-flight safety checks..."
+Test-C9MsiExecMutex
 $clearPendingDecision = Test-C9RebootDecision -Scenario ClearPending -SystemState $script:systemState -OverrideSuppression $true
-
 if ($clearPendingDecision.ShouldReboot) {
-    Write-Host "[$ScriptName] [ACTION] Clearing pending reboot as recommended: $($clearPendingDecision.Reason)"
+    Write-Host "[$ScriptName] [ACTION] Clearing pending reboot as recommended..."
     Restart-ComputerAndWait -TimeoutDuration (New-TimeSpan -Minutes 15)
-    $script:systemState = $null # Invalidate state to force re-check on next run
     throw "Halting execution after pre-flight reboot to ensure fresh state analysis on next run."
 } elseif (-not $clearPendingDecision.ShouldProceed) {
-    throw "[$ScriptName] HALT: Cannot clear pending reboot safely. Reason: $($clearPendingDecision.Reason)"
-} else {
-    Write-Host "[$ScriptName] [PASS] No pending reboot clearance needed: $($clearPendingDecision.Reason)"
+    throw "[$ScriptName] HALT: Cannot clear pending reboot safely: $($clearPendingDecision.Reason)"
 }
 Write-Host "[$ScriptName] Phase 1 Complete. Proceeding to S1 health validation..."
 
 # =========================================================================
-# --- Phase 2: S1 Health Validation ---
+# --- Phase 2: S1 Health Validation (The "Test" Logic) ---
 # =========================================================================
-try {
-    Write-Host "[$ScriptName] Phase 2: Evaluating SentinelOne agent health..."
+Write-Host "`n[$ScriptName] Phase 2: Evaluating SentinelOne agent health..."
 
-    # The decision logic is now beautifully simple and reads from the state object.
-    if (-not $script:systemState.S1Status.IsPresentAnywhere) {
-        Write-Warning "[$ScriptName] [FAIL] Agent is not present on the system."
-        return $false
-    }
+# --- THIS IS THE TEST LOGIC ---
+# We define our "definition of healthy" as a series of rules.
+$s1Status = $script:systemState.S1Status
+$reasonsForFailure = @()
+
+# Rule 1: Agent must be present.
+if (-not $s1Status.IsPresentAnywhere) { $reasonsForFailure += "Agent is not present on the system." }
+
+# Rule 2: All report objects must exist (prevents errors on very broken installs).
+if (-not ($s1Status.ServicesReport -and $s1Status.InstallDirectoryReport -and $s1Status.SentinelCtlStatusReport)) {
+    $reasonsForFailure += "One or more critical data reports could not be generated."
+} else {
+    # Rule 3: Main service must be running.
+    $mainServiceState = ($s1Status.ServicesReport | Where-Object { $_.Service -eq 'SentinelAgent' }).RunningState
+    if ($mainServiceState -ne 'Running') { $reasonsForFailure += "Main SentinelAgent service is not running (State: $mainServiceState)." }
+
+    # Rule 4: Active install files must exist.
+    $activeExeStatus = ($s1Status.InstallDirectoryReport | Where-Object { $_.Property -eq 'Active SentinelAgent.exe' }).Value # <-- Corrected property access
+    if ($activeExeStatus -ne 'Exists') { $reasonsForFailure += "Active SentinelAgent.exe is missing." }
     
-    if ($script:systemState.S1Status.IsConsideredHealthy) {
-        Write-Host -ForegroundColor Green "[$ScriptName] [PASS] Agent is considered healthy based on comprehensive checks."
-        return $true
-    }
-    else {
-        Write-Warning "[$ScriptName] [FAIL] Agent is present but is considered UNHEALTHY."
-        # The detailed table logged in Phase 0 shows exactly which check failed.
-        return $false
-    }
+    # Rule 5: No orphaned files.
+    $otherFilesStatus = ($s1Status.InstallDirectoryReport | Where-Object { $_.Property -eq 'Other Child Folder Total Files' }).Value # <-- Corrected property access
+    $otherFileCount = [int]($otherFilesStatus -replace ' files found', '')
+    if ($otherFileCount -gt 0) { $reasonsForFailure += "Orphaned files found in other Sentinel directories ($otherFileCount files)." }
 
-} catch {
-    Write-Error "[$ScriptName] The Test Script failed with a fatal error: $($_.Exception.Message)"
-    # A fatal error during the test means the state is unknown/unhealthy.
+    # Rule 6: sentinelctl must succeed.
+    $ctlSuccess = ($s1Status.SentinelCtlStatusReport | Where-Object { $_.Property -eq 'Execution Was Successful' }).Value
+    if ($ctlSuccess -ne 'True') { $reasonsForFailure += "sentinelctl.exe status command failed." }
+    
+    # Rule 7: Versions must match.
+    if ($s1Status.VersionFromService -ne $s1Status.VersionFromCtl) { $reasonsForFailure += "Version mismatch (Service: $($s1Status.VersionFromService), Ctl: $($s1Status.VersionFromCtl))." }
+}
+
+# --- FINAL DECISION ---
+if ($reasonsForFailure.Count -eq 0) {
+    Write-Host -ForegroundColor Green "[$ScriptName] [PASS] All health checks passed."
+    return $true
+}
+else {
+    Write-Warning "[$ScriptName] [FAIL] The agent is considered UNHEALTHY. Reason(s):"
+    foreach ($reason in $reasonsForFailure) { Write-Warning "- $reason" }
     return $false
 }
