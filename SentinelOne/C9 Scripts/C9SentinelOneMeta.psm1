@@ -88,6 +88,9 @@ function Get-C9SentinelOneVersion {
     [CmdletBinding()]
     param()
 
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
+
     $FunctionName = "Get-C9SentinelOneVersion"
 
     # Write-Host "[$ScriptName - $FunctionName] Attempting to get S1 version from endpoint..."
@@ -154,6 +157,9 @@ function Get-C9S1EndpointData {
     #>
 
     param()
+
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
 
     $FunctionName = "Get-C9S1EndpointData"
 
@@ -250,8 +256,8 @@ function Get-C9SentinelCtl {
                     $key = "Uncategorized Status"
                     $value = $line
                 }
-                Add-Member $rowObject 'Property' $key.Trim()
-                Add-Member $rowObject 'Value' $value.Trim()
+                Add-Member -InputObject $rowObject -MemberType NoteProperty -Name 'Property' -Value $key.Trim()
+                Add-Member -InputObject $rowObject -MemberType NoteProperty -Name 'Value' -Value $value.Trim()
                 $reportArray += $rowObject
             }
         }
@@ -278,6 +284,9 @@ function Test-C9S1LocalUpgradeAuthorization {
         [Parameter(Mandatory)]
         [string]$AgentId
     )
+
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
 
     $FunctionName = "Test-C9S1LocalUpgradeAuthorization"
 
@@ -314,6 +323,9 @@ function Test-S1InstallPreFlight {
     [CmdletBinding()]
     [OutputType([PSCustomObject])]
     param()
+
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
 
     $FunctionName = "Test-S1InstallPreFlight"
 
@@ -394,6 +406,9 @@ function Resolve-InstallerAvailable {
         [hashtable]$AuthHeader
     )
 
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
+
     $FunctionName = "Resolve-InstallerAvailable"
 
     # Define a persistent, predictable staging directory on the endpoint
@@ -443,6 +458,9 @@ function Set-C9SentinelOneUnprotect {
         [string]$Passphrase
     )
 
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
+
     $FunctionName = "Set-C9SentinelOneUnprotect"
 
     # Step 1: Find the agent using our helper function
@@ -479,6 +497,9 @@ function Set-C9SentinelOneUnprotect {
 function Set-C9SentinelOneProtect {
     [CmdletBinding()]
     param()
+
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
 
     $FunctionName = "Set-C9SentinelOneProtect"
     $s1Info = Get-C9SentinelOneInfo

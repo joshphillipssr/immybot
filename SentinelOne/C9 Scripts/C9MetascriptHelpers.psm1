@@ -50,6 +50,9 @@ function Get-C9ComprehensiveSystemState {
     [CmdletBinding()]
     param()
 
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
+
     $FunctionName = "Get-C9ComprehensiveSystemState"
 
     # Announce the start of the entire data gathering process.
@@ -86,92 +89,6 @@ function Get-C9ComprehensiveSystemState {
     return $systemState
 }
 
-function Format-C9ObjectForDisplay {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]
-        [PSObject]$InputObject,
-        [Parameter(Mandatory = $false)]
-        [string]$DefaultCategory = "General"
-    )
-
-    $VerbosePreference = 'Continue'
-    $DebugPreference = 'Continue'
-
-    $FunctionName = "Format-C9ObjectForDisplay"
-   
-    $displayRows = @()
-    function ConvertTo-TitleCase ($str) {
-        if ([string]::IsNullOrWhiteSpace($str)) {
-            return $str
-        }
-        return -join ($str -split '(?=[A-Z])' | ForEach-Object {
-            if ($_.Length -gt 1) {
-                $_.Substring(0,1).ToUpper() + $_.Substring(1) + ' '
-            } else {
-                $_.ToUpper() + ' '
-            }
-        }).Trim()
-    }
-    foreach ($topLevelProperty in $InputObject.PSObject.Properties) {
-        $topLevelName = $topLevelProperty.Name
-        $topLevelValue = $topLevelProperty.Value
-        if (($topLevelValue -is [System.Management.Automation.PSCustomObject] -or $topLevelValue -is [array]) -and $topLevelValue.Count -gt 0) {
-            $categoryName = ConvertTo-TitleCase $topLevelName
-            foreach ($item in [array]$topLevelValue) {
-                if ($item -isnot [System.Management.Automation.PSCustomObject]) {
-                    continue
-                }
-                if ($item.PSObject.Properties.Name -contains 'Property' -and $item.PSObject.Properties.Name -contains 'Value') {
-                    $propName = $item.Property
-                    $propValue = $item.Value
-                    $row = New-Object -TypeName PSObject
-                    Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $categoryName
-                    Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase -str $propName)
-                    Add-Member -InputObject $row -MemberType NoteProperty -Name 'Value' -Value "$propValue"
-                    $displayRows += $row
-                } else {
-                    foreach ($innerProperty in $item.PSObject.Properties) {
-                        $propName = $innerProperty.Name
-                        $propValue = $innerProperty.Value
-                        $displayValue = if ($null -eq $propValue) {
-                            "(not set)"
-                        } elseif ($propValue -is [bool]) {
-                            if ($propValue) { "[TRUE]" } else { "[FALSE]" }
-                        } else {
-                            "$propValue"
-                        }
-                        $row = New-Object -TypeName PSObject
-                        Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $categoryName
-                        Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase -str $propName)
-                        Add-Member -InputObject $row -MemberType NoteProperty -Name 'Value' -Value $displayValue
-                        $displayRows += $row
-                    }
-                }
-            }
-        } else {
-            $propName = $topLevelName
-            $propValue = $topLevelValue
-            $displayValue = if ($null -eq $propValue) {
-                "(not set)"
-            } elseif ($propValue -is [bool]) {
-                if ($propValue) { "[TRUE]"
-            } else { "[FALSE]" }
-            } elseif ($propValue -is [array]) {
-                ($propValue -join ', ')
-            } else {
-                "$propValue"
-            }
-            $row = New-Object -TypeName PSObject
-            Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $DefaultCategory
-            Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase -str $propName)
-            Add-Member -InputObject $row -MemberType NoteProperty -Name 'Value' -Value $displayValue
-            $displayRows += $row
-        }
-    }
-    return $displayRows
-}
-
 function Get-C9QuserResult {
     <#
     .SYNOPSIS
@@ -190,6 +107,9 @@ function Get-C9QuserResult {
         [Parameter(Mandatory = $false)]
         $Computer = (Get-ImmyComputer)
     )
+
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
 
     $FunctionName = "Get-C9QuserResult"
 
@@ -234,6 +154,10 @@ function Get-C9UserIdleTime {
         [Parameter(Mandatory = $false)]
         $Computer = (Get-ImmyComputer)
     )
+
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
+
     $FunctionName = "Get-C9UserIdleTime"
 
     Write-Host "[$ScriptName - $FunctionName] Getting idle time via Invoke-ImmyCommand script block..."
@@ -325,6 +249,9 @@ function Get-C9RebootPolicyContext {
         [Parameter(Mandatory = $false)]
         $Computer = (Get-ImmyComputer)
     )
+
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
 
     $FunctionName = "Get-C9RebootPolicyContext"
 
@@ -456,6 +383,9 @@ function Get-C9UserActivityStatus {
         [Parameter(Mandatory = $false)]
         $Computer = (Get-ImmyComputer)
     )
+
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
 
     $FunctionName = "Get-C9UserActivityStatus"
     
@@ -589,6 +519,9 @@ function Get-C9SystemRebootRequirements {
         $Computer = (Get-ImmyComputer)
     )
 
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
+
     $FunctionName = "Get-C9SystemRebootRequirements"
     
     Write-Host "[$ScriptName - $FunctionName] Gathering system reboot requirements..."
@@ -702,6 +635,9 @@ function Test-C9IsUserLoggedIn {
         $Computer = (Get-ImmyComputer)
     )
 
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
+
     $FunctionName = "Test-C9IsUserLoggedIn"
     Write-Host "[$ScriptName - $FunctionName] Starting logged-in user check on $($Computer.Name)..."
 
@@ -769,6 +705,9 @@ function Test-C9SystemPrerequisites {
         [switch]$AttemptRemediation,
         [timespan]$RebootTimeout = (New-TimeSpan -Minutes 15)
     )
+
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
 
     $FunctionName = "Test-C9SystemPrerequisites"
 
@@ -894,11 +833,8 @@ function Test-C9EndpointSafeToReboot {
     #    [switch]$Quiet
     )
 
-    # $VerbosePreference = 'Continue'
-
-    #if ($Quiet) {
-    #$VerbosePreference = 'SilentlyContinue'
-    #}
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
 
     $FunctionName = "Test-C9EndpointSafeToReboot"
 
@@ -1071,6 +1007,9 @@ function Test-AndClearPendingReboot {
         [bool]$ThrowOnFailure = $true
     )
 
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
+
     $FunctionName = "Test-AndClearPendingReboot"
 
     Write-Host "[$ScriptName - $FunctionName] Checking for pending reboot that could interfere with operations..."
@@ -1217,6 +1156,9 @@ function Test-C9RebootDecision {
         $Computer = (Get-ImmyComputer)
     )
 
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
+
     $FunctionName = "Test-C9RebootDecision"
     
     Write-Host "[$ScriptName - $FunctionName] Starting reboot decision analysis for scenario: $Scenario$(if ($WhatIf) { ' (WhatIf Mode)' })"
@@ -1312,6 +1254,9 @@ function Test-UserActivityForReboot {
         [int]$MaxUserIdleMinutes
     )
 
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
+
     $result = @{
         IsSafe = $false
         ShouldPrompt = $false
@@ -1381,6 +1326,9 @@ function Test-C9MsiExecMutex {
         [Parameter(Mandatory=$false)]
         $Computer = (Get-ImmyComputer)
     )
+
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
 
     $FunctionName = "Test-C9MsiExecMutex"
     Write-Host "[$ScriptName - $FunctionName] Checking MSI mutex availability..."
@@ -1494,6 +1442,9 @@ function Invoke-PreActionDecisionLogic {
         $Computer
     )
 
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
+
     $FunctionName = "Invoke-PreActionDecisionLogic"
     Write-Host "[$ScriptName - $FunctionName] Evaluating PreAction scenario..."
 
@@ -1592,6 +1543,9 @@ function Invoke-PostActionDecisionLogic {
         $Computer
     )
 
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
+
     $FunctionName = "Invoke-PostActionDecisionLogic"
     Write-Host "[$ScriptName - $FunctionName] Evaluating PostAction scenario..."
 
@@ -1667,6 +1621,9 @@ function Invoke-ClearPendingDecisionLogic {
         [Parameter(Mandatory = $true)]
         $Computer
     )
+
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
 
     $FunctionName = "Invoke-ClearPendingDecisionLogic"
     Write-Host "[$ScriptName - $FunctionName] Evaluating ClearPending scenario..."
@@ -1764,6 +1721,9 @@ function Invoke-C9InstallWithChildProcesses {
         [Parameter(Mandatory = $false)]
         $Computer = (Get-ImmyComputer)
     )
+
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
 
     $FunctionName = "Invoke-C9InstallWithChildProcesses"
 
@@ -2040,23 +2000,54 @@ function Invoke-C9EndpointCommand {
     return $result
 }
 
-function Format-C9ObjectForDisplay {
+function Get-C9ComprehensiveSystemState {
     <#
     .SYNOPSIS
-        (Helper) Converts any simple or single-level nested PSCustomObject into a flat array for clean table display.
+        (Ultimate Get Orchestrator) Gathers all necessary state data from an endpoint.
     .DESCRIPTION
-        This generic function iterates through an object's properties and flattens them for logging.
-        - If a property's value is a simple type (string, bool, int), it creates a single row.
-        - If a property's value is another object (a nested object), it iterates through that sub-object's properties,
-          using the parent property's name as the category for those rows.
-        This provides a universal, recursive-like formatting tool for our scripts.
-    .PARAMETER InputObject
-        The PSCustomObject to format for display.
-    .PARAMETER DefaultCategory
-        A category name to use for any top-level, non-nested properties. Defaults to "General".
-    .OUTPUTS
-        An array of simple PSCustomObjects, each with Category, Property, and Value properties, ready for Format-Table.
+        This is the single, definitive function for gathering the complete
+        state of an endpoint. It orchestrates calls to the domain-specific master "Get" functions
+        (for S1, Reboot Requirements, and User Activity) and assembles their reports into one final,
+        all-encompassing data object. This function is a "quiet" data provider.
     #>
+    [CmdletBinding()]
+    param()
+
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
+
+    $FunctionName = "Get-C9ComprehensiveSystemState"
+
+    Import-Module "C9SentinelOneMeta"
+
+    Write-Host -Fore Yellow "[$ScriptName - $FunctionName] BEGINNING COMPREHENSIVE SYSTEM STATE ASSESSMENT..."
+    
+    # Initialize the final, all-encompassing state object.
+    $systemState = New-Object -TypeName PSObject
+    
+    # --- Step 1: Get S1 Agent Status ---
+    Write-Host "[$ScriptName - $FunctionName]`n--- Gathering SentinelOne Agent Status... ---" -ForegroundColor Cyan
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'S1Status' -Value (Get-C9S1ComprehensiveStatus)
+
+    # --- Step 2: Get Pending Reboot Status ---
+    Write-Host "[$ScriptName - $FunctionName]`n--- Gathering Pending Reboot Requirements... ---" -ForegroundColor Cyan
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootRequirements' -Value (Get-C9SystemRebootRequirements)
+    
+    # --- Step 3: Get User Activity Status ---
+    Write-Host "[$ScriptName - $FunctionName]`n--- Gathering User Activity Status... ---" -ForegroundColor Cyan
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'UserActivity' -Value (Get-C9UserActivityStatus)
+
+    # --- Step 4: Get Platform Reboot Policy ---
+    Write-Host "[$ScriptName - $FunctionName]`n--- Gathering Platform Reboot Policy Context... ---" -ForegroundColor Cyan
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootPolicy' -Value (Get-C9RebootPolicyContext)
+    
+    Write-Host -Fore Yellow "[$ScriptName - $FunctionName] COMPREHENSIVE SYSTEM STATE ASSESSMENT COMPLETE."
+    
+    # The function's only job is to return the raw data object.
+    return $systemState
+}
+
+function Format-C9ObjectForDisplay {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -2069,57 +2060,38 @@ function Format-C9ObjectForDisplay {
     $FunctionName = "Format-C9ObjectForDisplay"
     $displayRows = @()
 
-    # =========================================================================
-    # --- BEGIN CORRECTED SECTION ---
-    # =========================================================================
-    # This helper is now hardened to prevent the Substring error.
     function ConvertTo-TitleCase ($str) {
-        if ([string]::IsNullOrWhiteSpace($str)) {
-            return $str
-        }
-        return -join ($str -split '(?=[A-Z])' | ForEach-Object {
-            # Check if the chunk is longer than one character before calling Substring(1)
-            if ($_.Length -gt 1) {
-                $_.Substring(0,1).ToUpper() + $_.Substring(1) + ' '
-            } else {
-                # If it's only one character, just uppercase it.
-                $_.ToUpper() + ' '
-            }
-        }).Trim()
+        if ([string]::IsNullOrWhiteSpace($str)) { return $str }
+        return -join ($str -split '(?=[A-Z])' | ForEach-Object { if ($_.Length -gt 1) { $_.Substring(0,1).ToUpper() + $_.Substring(1) + ' ' } else { $_.ToUpper() + ' ' } }).Trim()
     }
    
     foreach ($topLevelProperty in $InputObject.PSObject.Properties) {
         $topLevelName = $topLevelProperty.Name
         $topLevelValue = $topLevelProperty.Value
 
+        # If a top-level property is an object or an array of objects, treat its name as a new category
         if (($topLevelValue -is [System.Management.Automation.PSCustomObject] -or $topLevelValue -is [array]) -and $topLevelValue.Count -gt 0) {
             $categoryName = ConvertTo-TitleCase $topLevelName
+            
+            # --- THIS IS THE FIX: We now loop through each item in the property's value ---
+            # The [array] cast gracefully handles both single nested objects and arrays of nested objects.
             foreach ($item in [array]$topLevelValue) {
-                if ($item -isnot [System.Management.Automation.PSCustomObject]) {
-                    continue
-                }
+                # Ensure we're only processing objects, not simple strings in an array.
+                if ($item -isnot [System.Management.Automation.PSCustomObject]) { continue }
+                
+                # Check if this item is a pre-formatted report (like from Get-C9S1InstallDirectoryState)
                 if ($item.PSObject.Properties.Name -contains 'Property' -and $item.PSObject.Properties.Name -contains 'Value') {
-                    $propName = $item.Property
-                    $propValue = $item.Value
                     $row = New-Object -TypeName PSObject
                     Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $categoryName
-                    Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase -str $propName)
-                    Add-Member -InputObject $row -MemberType NoteProperty -Name 'Value' -Value "$propValue"
+                    Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase -str $item.Property)
+                    Add-Member -InputObject $row -MemberType NoteProperty -Name 'Value' -Value "$($item.Value)"
                     $displayRows += $row
                 } else {
+                    # Otherwise, treat it as a standard object and iterate through its properties (for ServicesReport)
                     foreach ($innerProperty in $item.PSObject.Properties) {
-                        $propName = $innerProperty.Name
-                        $propValue = $innerProperty.Value
-                        $displayValue = if ($null -eq $propValue) { "(not set)" }
-                        elseif ($propValue -is [bool]) {
-                            if ($propValue) {
-                                "[TRUE]"
-                            } else {
-                                "[FALSE]"
-                            }
-                        } else {
-                            "$propValue"
-                        }
+                        $propName = $innerProperty.Name; $propValue = $innerProperty.Value
+                        $displayValue = if ($null -eq $propValue) { "(not set)" } elseif ($propValue -is [bool]) { if ($propValue) { "[TRUE]" } else { "[FALSE]" } } else { "$propValue" }
+                        
                         $row = New-Object -TypeName PSObject
                         Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $categoryName
                         Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase -str $propName)
@@ -2129,21 +2101,10 @@ function Format-C9ObjectForDisplay {
                 }
             }
         } else {
-            $propName = $topLevelName
-            $propValue = $topLevelValue
-            $displayValue = if ($null -eq $propValue) { "(not set)" }
-            elseif ($propValue -is [bool]) {
-                if ($propValue) {
-                    "[TRUE]"
-                } else {
-                    "[FALSE]"
-                }
-            } elseif ($propValue -is [array]) {
-                ($propValue -join ', ')
-            } else {
-                "$propValue"
-            }
-            ### FIX #3: Replaced [PSCustomObject] with ConstrainedLanguage-safe object creation ###
+            # This handles simple, top-level properties that are not nested objects.
+            $propName = $topLevelName; $propValue = $topLevelValue
+            $displayValue = if ($null -eq $propValue) { "(not set)" } elseif ($propValue -is [bool]) { if ($propValue) { "[TRUE]" } else { "[FALSE]" } } elseif ($propValue -is [array]) { ($propValue -join ', ') } else { "$propValue" }
+
             $row = New-Object -TypeName PSObject
             Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $DefaultCategory
             Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase -str $propName)
@@ -2151,67 +2112,7 @@ function Format-C9ObjectForDisplay {
             $displayRows += $row
         }
     }
-
     return $displayRows
-}
-
-function Get-C9ComprehensiveSystemState {
-    [CmdletBinding()]
-    param()
-
-    Write-Host "=========================================================="
-    Write-Host "--- BEGINNING ULTIMATE COMPREHENSIVE SYSTEM STATE ---" -ForegroundColor Yellow
-
-    # Gather S1 Status
-    $s1Status = Get-C9S1ComprehensiveStatus
-    # Gather Reboot Requirements
-    $rebootReqs = Get-C9SystemRebootRequirements
-    # Gather User Activity
-    $userActivity = Get-C9UserActivityStatus
-    # Get Reboot Policy
-    $rebootPolicy = Get-C9RebootPolicyContext
-
-    # Compose the data object
-    $systemState = [ordered]@{
-        S1Status          = $s1Status
-        RebootRequirements= $rebootReqs
-        UserActivity      = $userActivity
-        RebootPolicy      = $rebootPolicy
-    }
-
-    # Use helper to format for display
-    $rows = Format-C9ObjectForDisplay -InputObject (New-Object PSObject -Property $systemState) -DefaultCategory "System State"
-    $rows | Format-Table -AutoSize
-
-    Write-Host "----------------------------------------------------------"
-    Write-Host "--- END of COMPREHENSIVE SYSTEM STATE ---" -ForegroundColor Yellow
-    return (New-Object PSObject -Property $systemState)
-}
-
-# Example of supporting helper functions (simplified)
-function Format-C9ObjectForDisplay {
-    param([PSObject]$InputObject, [string]$DefaultCategory="General")
-    $rows = @()
-    foreach ($prop in $InputObject.PSObject.Properties) {
-        if ($prop.Value -is [PSObject]) {
-            foreach ($inner in $prop.Value.PSObject.Properties) {
-                $row = [PSCustomObject]@{
-                    Category = $prop.Name
-                    Property = $inner.Name
-                    Value    = $inner.Value
-                }
-                $rows += $row
-            }
-        } else {
-            $row = [PSCustomObject]@{
-                Category = $DefaultCategory
-                Property = $prop.Name
-                Value    = $prop.Value
-            }
-            $rows += $row
-        }
-    }
-    return $rows
 }
 
 Export-ModuleMember -Function *
