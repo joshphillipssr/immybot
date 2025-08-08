@@ -5,171 +5,108 @@
 # Docs:     https://immydocs.c9cg.com
 # =================================================================================
 
-function Get-C9ComputerLockedStatus {
-    <#
-    .SYNOPSIS
-        Gets detailed computer lock status information by combining cached quser.exe results with reliable lock detection.
-    .DESCRIPTION
-        This function provides comprehensive computer lock status by first getting session information from the
-        Get-C9QuserResult caching function, then determining the lock status using the proven LogonUI.exe process detection method.
-    .OUTPUTS
-        PSCustomObject with detailed lock status information.
-    #>
-    [CmdletBinding()]
-    [OutputType([PSCustomObject])]
+function Show-C9SystemStateReport {
+    # Gather all relevant info
+    $systemState = [ordered]@{
+        S1Status = Get-C9S1ComprehensiveStatus
+        RebootRequirements = Get-C9SystemRebootRequirements
+        UserActivity = Get-C9UserActivityStatus
+        RebootPolicy = Get-C9RebootPolicyContext
+    }
+
+    # Format the object into a readable table
+    $rows = Format-C9ObjectForDisplay -InputObject (New-Object PSObject -Property $systemState) -DefaultCategory "System State"
+
+    # Print in a clean, styled report
+    Write-Host "`n================== SYSTEM STATE DIAGNOSTIC ==================" -ForegroundColor Cyan
+    $rows | Format-Table -AutoSize
+    Write-Host "==============================================================" -ForegroundColor Cyan
+}
+
+function Write-C9Log {
     param(
-        [Parameter(Mandatory = $false)]
-        $Computer = (Get-ImmyComputer),
-        
-        [Parameter(Mandatory = $false)]
-        [switch]$IncludeUserContextCheck
+        [string]$Message,
+        [ValidateSet('Info', 'Warning', 'Error')]
+        [string]$Level = 'Info'
     )
+    switch ($Level) {
+        'Info' { Write-Host "$Message" }
+        'Warning' { Write-Warning "$Message" }
+        'Error' { Write-Error "$Message" }
+    }
+}
 
-    $FunctionName = "Get-C9ComputerLockedStatus"
-    
-    Write-Host "[$ScriptName - $FunctionName] Getting comprehensive computer lock status..."
+function Get-C9ComprehensiveSystemState {
+    [CmdletBinding()]
+    param()
 
-    $result = [ordered]@{ # (result object initialization remains the same)
-        HasActiveConsoleUser    = $false
-        ConsoleUserName         = $null
-        SessionState            = "Unknown"
-        IsLocked                = $false
-        LockStatus              = "Unknown"
-        SystemContextLockStatus = "Unknown"
-        UserContextLockStatus   = "Unknown"
-        AllSessions             = @()
-        ActiveSessions          = @()
-        DisconnectedSessions    = @()
-        SessionCount            = 0
-        DataSource              = "quser.exe (cached) + tasklist.exe"
-        RawQuserOutput          = ""
-        LogonUIRunning          = $false
-        DetectionMethod         = "System Context (tasklist)"
+    Write-Host "==========================================================" -ForegroundColor Yellow
+    Write-Host "--- BEGINNING ULTIMATE COMPREHENSIVE SYSTEM STATE ASSESSMENT ---" -ForegroundColor Yellow
+
+    # Collect all data
+    $systemState = New-Object -TypeName PSObject
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'S1Status' -Value (Get-C9S1ComprehensiveStatus)
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootRequirements' -Value (Get-C9SystemRebootRequirements)
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'UserActivity' -Value (Get-C9UserActivityStatus)
+    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootPolicy' -Value (Get-C9RebootPolicyContext)
+
+    # Use your existing Format-C9ObjectForDisplay helper
+    $rows = Format-C9ObjectForDisplay -InputObject $systemState -DefaultCategory "System State"
+
+    # Console output
+    Write-Host "--------------------- SYSTEM STATE ---------------------"
+    $rows | Format-Table -AutoSize
+    Write-Host "--------------------------------------------------------"
+}
+
+# And ensure your Format-C9ObjectForDisplay acts safely in ConstrainedLanguage. If needed, incorporate the correction I outlined earlier (safe string handling, avoiding direct .NET calls, etc).
+
+# The helper might look like this:
+function Format-C9ObjectForDisplay {
+    param(
+        [PSObject]$InputObject,
+        [string]$DefaultCategory = "General"
+    )
+    $rows = @()
+
+    function ConvertTo-TitleCase {
+        param($str)
+        if ([string]::IsNullOrWhiteSpace($str)) { return $str }
+        return -join ($str -split '(?=[A-Z])' | ForEach-Object {
+            if ($_.Length -gt 1) { $_.Substring(0,1).ToUpper() + $_.Substring(1) + ' ' } else { $_.ToUpper() + ' ' }
+        }).Trim()
     }
 
-    try {
-        # Step 1: Use the new caching function to get reliable session information.
-        Write-Host "[$ScriptName - $FunctionName] Getting user session information from Quser cache..."
-        $quserResult = Get-C9QuserResult -Computer $Computer
-
-        $result.RawQuserOutput = $quserResult.StandardOutput
-
-        if ($quserResult.ExitCode -ne 0) {
-            # quser.exe exits with code 1 if no users are logged on
-            if (($quserResult.StandardOutput.Contains("no User exists for")) -or ($quserResult.StandardError.Contains("No User exists for"))) {
-                Write-Host "[$ScriptName - $FunctionName] Cached quser data confirms no users are logged on"
-                $result.LockStatus = "LoggedOut"
-                $result.SystemContextLockStatus = "LoggedOut"
-                return New-Object -TypeName PSObject -Property $result
-            } else {
-                Write-Warning "[$ScriptName - $FunctionName] Cached quser data indicates failure (Exit Code: $($quserResult.ExitCode))"
-                $result.DataSource = "Error - quser failed"
-                $result.LockStatus = "Unknown"
-                return New-Object -TypeName PSObject -Property $result
-            }
-        }
-
-        # Step 2: Parse quser output (This part of the logic is unchanged)
-        Write-Host "[$ScriptName - $FunctionName] Parsing cached quser.exe output..."
-        $sessions = @()
-        $lines = $quserResult.StandardOutput -split "`r`n|`n" | Where-Object { $_.Trim() -ne "" }
-        for ($i = 1; $i -lt $lines.Count; $i++) {
-            # ... (the quser parsing logic is complex but remains exactly the same as before) ...
-            $line = $lines[$i].Trim(); if ([string]::IsNullOrWhiteSpace($line)) { continue }
-            $parts = $line -split '\s+', 7; if ($parts.Count -ge 4) {
-                $sessionProperties = [ordered]@{ UserName = $parts[0]; SessionName = if ($parts[1] -match '^\d+$') { "console"
-            } else {
-                $parts[1] }
-                SessionId = if ($parts[1] -match '^\d+$') {
-                    $parts[1]
-                } else {
-                    $parts[2] }
-                    State = if ($parts[1] -match '^\d+$') {
-                        $parts[2] } else { $parts[3] }
-                        IdleTime = if ($parts[1] -match '^\d+$') {
-                            $parts[3]
-                        } else {
-                            $parts[4] }
-                            LogonTime = if ($parts[1] -match '^\d+$') {
-                                ($parts[4..6] -join ' ')
-                        } else {
-                            ($parts[5..6] -join ' ')
-                        }
-                    }
-                $session = New-Object -TypeName PSObject -Property $sessionProperties; $sessions += $session
-                if ($session.State -eq "Active" -and ($session.SessionName -eq "console" -or $session.SessionId -match '^[0-2]$')) {
-                    $result.HasActiveConsoleUser = $true
-                    $result.ConsoleUserName = $session.UserName
-                    $result.SessionState = $session.State
-                    Write-Host "[$ScriptName - $FunctionName] Found active console user: $($session.UserName)"
-                }
-            }
-        }
-        $result.AllSessions = $sessions
-        $result.ActiveSessions = @($sessions | Where-Object { $_.State -eq "Active" })
-        $result.DisconnectedSessions = @($sessions | Where-Object { $_.State -eq "Disc" })
-        $result.SessionCount = $sessions.Count
-        Write-Host "[$ScriptName - $FunctionName] Found $($result.SessionCount) total sessions ($($result.ActiveSessions.Count) active, $($result.DisconnectedSessions.Count) disconnected)"
-
-        # Step 3: System context lock detection using tasklist.exe (This is a different command and is unchanged)
-        Write-Host "[$ScriptName - $FunctionName] Checking LogonUI.exe process for lock status using tasklist.exe..."
-        $tasklistResult = Invoke-C9EndpointCommand -FilePath "tasklist.exe" -ArgumentList @("/FI", "IMAGENAME eq LogonUI.exe", "/FO", "CSV") -Computer $Computer
-        # ... (The rest of the function for parsing tasklist and determining final lock status is unchanged) ...
-        if ($tasklistResult.ExitCode -eq 0) {
-            $result.LogonUIRunning = $tasklistResult.StandardOutput -match "LogonUI.exe"
-            Write-Host "[$ScriptName - $FunctionName] tasklist.exe LogonUI detection result: $($result.LogonUIRunning)"
-            if ($result.HasActiveConsoleUser) {
-                if ($result.LogonUIRunning) {
-                    $result.SystemContextLockStatus = "Locked"
-                } else {
-                    $result.SystemContextLockStatus = "Unlocked" }
-            } else {
-                $result.SystemContextLockStatus = "LoggedOut"
+    foreach ($prop in $InputObject.PSObject.Properties) {
+        if ($prop.Value -is [PSObject] -and $prop.Value.PSObject.Properties.Count -gt 0) {
+            $category = ConvertTo-TitleCase $prop.Name
+            foreach ($inner in $prop.Value.PSObject.Properties) {
+                $value = $inner.Value
+                if ($null -eq $value) { $displayValue = "(not set)" }
+                elseif ($value -is [bool]) { $displayValue = if ($value) { "[TRUE]" } else { "[FALSE]" } }
+                elseif ($value -is [array]) { $displayValue = $value -join ', '; if ([string]::IsNullOrWhiteSpace($displayValue)) { $displayValue = "(empty list)" } }
+                else { $displayValue = "$value" }
+                $row = New-Object PSCustomObject
+                Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $category
+                Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase $inner.Name)
+                Add-Member -InputObject $row -MemberType NoteProperty -Name 'Value' -Value $displayValue
+                $rows += $row
             }
         } else {
-            Write-Warning "[$ScriptName - $FunctionName] Could not check LogonUI.exe process status"; $result.SystemContextLockStatus = "Error"
+            $name = $prop.Name
+            $value = $prop.Value
+            if ($null -eq $value) { $displayValue = "(not set)" }
+            elseif ($value -is [bool]) { $displayValue = if ($value) { "[TRUE]" } else { "[FALSE]" } }
+            elseif ($value -is [array]) { $displayValue = $value -join ', '; if ([string]::IsNullOrWhiteSpace($displayValue)) { $displayValue = "(empty list)" } }
+            else { $displayValue = "$value" }
+            $row = New-Object PSCustomObject
+            Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $DefaultCategory
+            Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase $name)
+            Add-Member -InputObject $row -MemberType NoteProperty -Name 'Value' -Value $displayValue
+            $rows += $row
         }
-        if ($IncludeUserContextCheck.IsPresent -and $result.HasActiveConsoleUser) {
-            # ... (optional user context check unchanged) ...
-        } else {
-            if (-not $result.HasActiveConsoleUser) {
-                $result.UserContextLockStatus = "No User"
-            } else {
-                $result.UserContextLockStatus = "Not Requested" } 
-            }
-        Write-Host "[$ScriptName - $FunctionName] Determining final lock status..."
-        if (-not $result.HasActiveConsoleUser) {
-            $result.LockStatus = "LoggedOut"
-            $result.IsLocked = $false
-        } else {
-            if ($result.SystemContextLockStatus -eq "Locked") {
-                $result.LockStatus = "Locked"
-                $result.IsLocked = $true
-            } elseif ($result.SystemContextLockStatus -eq "Unlocked") {
-                $result.LockStatus = "Unlocked"
-                $result.IsLocked = $false
-            } else {
-                if ($result.UserContextLockStatus -eq "Locked") {
-                    $result.LockStatus = "Locked"
-                    $result.IsLocked = $true
-                } elseif ($result.UserContextLockStatus -eq "Unlocked") {
-                    $result.LockStatus = "Unlocked"
-                    $result.IsLocked = $false
-                } else {
-                    $result.LockStatus = "Unknown";
-                    $result.IsLocked = $false
-                }
-            }
-        }
-        Write-Host "[$ScriptName - $FunctionName] Final lock status: $($result.LockStatus) (System: $($result.SystemContextLockStatus), User: $($result.UserContextLockStatus))"
-    } catch {
-        Write-Error "[$ScriptName - $FunctionName] Error gathering computer lock status: $($_.Exception.Message)"
-        $result.DataSource = "Error"
-        $result.LockStatus = "Error"
     }
-
-    Write-Host "[$ScriptName - $FunctionName] computer lock status gathering complete"
-    return New-Object -TypeName PSObject -Property $result
+    return $rows
 }
 
 function Get-C9QuserResult {
@@ -328,7 +265,7 @@ function Get-C9RebootPolicyContext {
 
     $FunctionName = "Get-C9RebootPolicyContext"
 
-    Write-Host "[$ScriptName - $FunctionName] Gathering platform reboot policy context..."
+    Write-Host -Fore Cyan "[$ScriptName - $FunctionName] Gathering platform reboot policy context..."
 
     # Initialize result object with all possible properties
     $result = [ordered]@{
@@ -350,9 +287,9 @@ function Get-C9RebootPolicyContext {
             $result.RebootPreference = $rebootPrefVar.Value
             $result.IsRebootPreferenceAvailable = $true
             $result.PolicySource = "Platform Variables"
-            #Write-Host "[$ScriptName - $FunctionName] Found RebootPreference: '$($rebootPrefVar.Value)'"
+            Write-Host "[$ScriptName - $FunctionName] Found RebootPreference: '$($rebootPrefVar.Value)'"
         } else {
-            Write-Host "[$ScriptName - $FunctionName] RebootPreference variable not found in current context"
+            Write-Host -Fore Orange "[$ScriptName - $FunctionName] RebootPreference variable not found in current context"
         }
 
         # Check for PromptTimeoutAction variable
@@ -360,9 +297,9 @@ function Get-C9RebootPolicyContext {
         if ($null -ne $promptTimeoutActionVar) {
             $result.PromptTimeoutAction = $promptTimeoutActionVar.Value
             $result.IsPromptTimeoutActionAvailable = $true
-            #Write-Host "[$ScriptName - $FunctionName] Found PromptTimeoutAction: '$($promptTimeoutActionVar.Value)'"
+            Write-Host "[$ScriptName - $FunctionName] Found PromptTimeoutAction: '$($promptTimeoutActionVar.Value)'"
         } else {
-            Write-Host "[$ScriptName - $FunctionName] PromptTimeoutAction variable not found in current context"
+            Write-Host -Fore Orange "[$ScriptName - $FunctionName] PromptTimeoutAction variable not found in current context"
         }
 
         # Check for AutoConsentToReboots variable
@@ -370,9 +307,9 @@ function Get-C9RebootPolicyContext {
         if ($null -ne $autoConsentVar) {
             $result.AutoConsentToReboots = $autoConsentVar.Value
             $result.IsAutoConsentToRebootsAvailable = $true
-            #Write-Host "[$ScriptName - $FunctionName] Found AutoConsentToReboots: '$($autoConsentVar.Value)'"
+            Write-Host "[$ScriptName - $FunctionName] Found AutoConsentToReboots: '$($autoConsentVar.Value)'"
         } else {
-            Write-Host "[$ScriptName - $FunctionName] AutoConsentToReboots variable not found in current context"
+            Write-Host -Fore Orange "[$ScriptName - $FunctionName] AutoConsentToReboots variable not found in current context"
         }
 
         # Check for PromptTimeout variable
@@ -380,9 +317,9 @@ function Get-C9RebootPolicyContext {
         if ($null -ne $promptTimeoutVar) {
             $result.PromptTimeout = $promptTimeoutVar.Value
             $result.IsPromptTimeoutAvailable = $true
-            #Write-Host "[$ScriptName - $FunctionName] Found PromptTimeout: '$($promptTimeoutVar.Value)'"
+            Write-Host "[$ScriptName - $FunctionName] Found PromptTimeout: '$($promptTimeoutVar.Value)'"
         } else {
-            Write-Host "[$ScriptName - $FunctionName] PromptTimeout variable not found in current context"
+            Write-Host -Fore Orange"[$ScriptName - $FunctionName] PromptTimeout variable not found in current context"
         }
 
         # Update PolicySource if any variables were found
@@ -394,13 +331,13 @@ function Get-C9RebootPolicyContext {
         ) | Where-Object { $_ -eq $true } | Measure-Object | Select-Object -ExpandProperty Count
 
         if ($availableCount -gt 0) {
-            Write-Host "[$ScriptName - $FunctionName] Found $availableCount platform reboot policy variable(s)"
+            Write-Host -Fore Green "[$ScriptName - $FunctionName] Found $availableCount platform reboot policy variable(s)"
         } else {
-            Write-Host "[$ScriptName - $FunctionName] No platform reboot policy variables found in current context"
+            Write-Host -Fore Green "[$ScriptName - $FunctionName] No platform reboot policy variables found in current context"
         }
 
     } catch {
-        Write-Error "[$ScriptName - $FunctionName] Error gathering platform reboot policy context: $($_.Exception.Message)"
+        Write-Error -Fore Red "[$ScriptName - $FunctionName] Error gathering platform reboot policy context: $($_.Exception.Message)"
         $result.PolicySource = "Error"
     }
 
@@ -408,10 +345,10 @@ function Get-C9RebootPolicyContext {
 
     # Format the collected rows into a table string and display it.
     $tableOutput = $displayRows | Format-Table -AutoSize | Out-String
-    Write-Host "----------------- REBOOT POLICY CONTEXT -----------------"
-    Write-Host -ForegroundColor Cyan $tableOutput
-    Write-Host "---------------------------------------------------------"
-    Write-Host "[$ScriptName - $FunctionName] Platform reboot policy context gathering complete."
+    Write-Host -Fore Green "----------------- REBOOT POLICY CONTEXT -----------------"
+    Write-Host -Fore Cyan $tableOutput
+    Write-Host -Fore Green "---------------------------------------------------------"
+    Write-Host -Fore Green "[$ScriptName - $FunctionName] Platform reboot policy context gathering complete."
     
     return New-Object -TypeName PSObject -Property $result
 }
@@ -1984,15 +1921,15 @@ function Invoke-C9EndpointCommand {
 
     $FunctionName = "Invoke-C9EndpointCommand"
 
-    #Write-Host "[$ScriptName - $FunctionName] Preparing to execute '$FilePath' with arguments: $($ArgumentList -join ' ')"
+    Write-Host "[$ScriptName - $FunctionName] Preparing to execute '$FilePath' with arguments: $($ArgumentList -join ' ')"
 
     # We use the $using: scope modifier to reliably pass variables into the script block,
     # bypassing the unreliable -ArgumentList parameter binding mechanism.
     $result = Invoke-ImmyCommand -Computer $Computer -Timeout $TimeoutSeconds -ScriptBlock {
         
         # We do not use a param() block here; we access the variables directly via $using:
-        #Write-Host "[$using:ScriptName - $using:FunctionName] Endpoint received command: '$($using:FilePath)'"
-        #Write-Host "[$using:ScriptName - $using:FunctionName] Endpoint received argument: '$($using:ArgumentList -join ' ')'"
+        Write-Host "[$using:ScriptName - $using:FunctionName] Endpoint received command: '$($using:FilePath)'"
+        Write-Host "[$using:ScriptName - $using:FunctionName] Endpoint received argument: '$($using:ArgumentList -join ' ')'"
         
         if (-not (Test-Path -Path $using:FilePath -PathType Leaf)) {
             throw "[$using:ScriptName - $using:FunctionName] Executable not found at path: $($using:FilePath)"
@@ -2004,7 +1941,7 @@ function Invoke-C9EndpointCommand {
         }
         $argumentString = $formattedArgs -join ' '
 
-        #Write-Host "[$using:ScriptName - $using:FunctionName] Executing: `"$($using:FilePath)`" $argumentString"
+        Write-Host "[$using:ScriptName - $using:FunctionName] Executing: `"$($using:FilePath)`" $argumentString"
 
         $pinfo = New-Object System.Diagnostics.ProcessStartInfo
         $pinfo.FileName = $using:FilePath
@@ -2039,11 +1976,11 @@ function Invoke-C9EndpointCommand {
 
     # Log the full results to the Metascript log for excellent visibility.
     if ($result) {
-        #Write-Host -ForegroundColor Green "[$ScriptName - $FunctionName] Command finished with Exit Code: $($result.ExitCode)."
+        Write-Host -ForegroundColor Green "[$ScriptName - $FunctionName] Command finished with Exit Code: $($result.ExitCode)."
         if (-not [string]::IsNullOrWhiteSpace($result.StandardOutput)) {
-            #Write-Host -ForegroundColor Cyan "[$ScriptName - $FunctionName] --- Start Standard Output ---"
-            #Write-Host -ForegroundColor Green $result.StandardOutput
-            #Write-Host -ForegroundColor Cyan "[$ScriptName - $FunctionName] --- End Standard Output ---"
+            Write-Host -ForegroundColor Cyan "[$ScriptName - $FunctionName] --- Start Standard Output ---"
+            Write-Host -ForegroundColor Green $result.StandardOutput
+            Write-Host -ForegroundColor Cyan "[$ScriptName - $FunctionName] --- End Standard Output ---"
         }
         if (-not [string]::IsNullOrWhiteSpace($result.StandardError)) {
             #Write-Warning "--- Start Standard Error ---"
@@ -2167,32 +2104,62 @@ function Format-C9ObjectForDisplay {
 }
 
 function Get-C9ComprehensiveSystemState {
-    <#
-    .SYNOPSIS
-        (Ultimate Get Orchestrator) Gathers all necessary state data from an endpoint.
-    #>
     [CmdletBinding()]
     param()
 
-    Write-Host "==========================================================" -ForegroundColor Yellow
-    Write-Host "--- BEGINNING ULTIMATE COMPREHENSIVE SYSTEM STATE ASSESSMENT ---" -ForegroundColor Yellow
+    Write-Host "=========================================================="
+    Write-Host "--- BEGINNING ULTIMATE COMPREHENSIVE SYSTEM STATE ---" -ForegroundColor Yellow
 
-    # --- THIS IS THE PRIMARY FIX ---
-    # We must import the module containing the S1-specific functions we need to call.
-    Import-Module "C9SentinelOneMeta"
-    
-    $systemState = New-Object -TypeName PSObject
-    
-    # --- This function now orchestrates QUIET helpers ---
-    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'S1Status' -Value (Get-C9S1ComprehensiveStatus)
-    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootRequirements' -Value (Get-C9SystemRebootRequirements)
-    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'UserActivity' -Value (Get-C9UserActivityStatus)
-    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootPolicy' -Value (Get-C9RebootPolicyContext)
-    
-    Write-Host "==========================================================" -ForegroundColor Yellow
-    Write-Host "--- ULTIMATE COMPREHENSIVE SYSTEM STATE ASSESSMENT COMPLETE ---" -ForegroundColor Yellow
-    
-    return $systemState
+    # Gather S1 Status
+    $s1Status = Get-C9S1ComprehensiveStatus
+    # Gather Reboot Requirements
+    $rebootReqs = Get-C9SystemRebootRequirements
+    # Gather User Activity
+    $userActivity = Get-C9UserActivityStatus
+    # Get Reboot Policy
+    $rebootPolicy = Get-C9RebootPolicyContext
+
+    # Compose the data object
+    $systemState = [ordered]@{
+        S1Status          = $s1Status
+        RebootRequirements= $rebootReqs
+        UserActivity      = $userActivity
+        RebootPolicy      = $rebootPolicy
+    }
+
+    # Use helper to format for display
+    $rows = Format-C9ObjectForDisplay -InputObject (New-Object PSObject -Property $systemState) -DefaultCategory "System State"
+    $rows | Format-Table -AutoSize
+
+    Write-Host "----------------------------------------------------------"
+    Write-Host "--- END of COMPREHENSIVE SYSTEM STATE ---" -ForegroundColor Yellow
+    return (New-Object PSObject -Property $systemState)
+}
+
+# Example of supporting helper functions (simplified)
+function Format-C9ObjectForDisplay {
+    param([PSObject]$InputObject, [string]$DefaultCategory="General")
+    $rows = @()
+    foreach ($prop in $InputObject.PSObject.Properties) {
+        if ($prop.Value -is [PSObject]) {
+            foreach ($inner in $prop.Value.PSObject.Properties) {
+                $row = [PSCustomObject]@{
+                    Category = $prop.Name
+                    Property = $inner.Name
+                    Value    = $inner.Value
+                }
+                $rows += $row
+            }
+        } else {
+            $row = [PSCustomObject]@{
+                Category = $DefaultCategory
+                Property = $prop.Name
+                Value    = $prop.Value
+            }
+            $rows += $row
+        }
+    }
+    return $rows
 }
 
 Export-ModuleMember -Function *

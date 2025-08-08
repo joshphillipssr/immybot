@@ -1,4 +1,13 @@
+# =================================================================================
+# Name:     C9SP-SentinelOne-Test Script
+# Author:   Josh Phillips
+# Contact:  josh@c9cg.com
+# Docs:     https://immydocs.c9cg.com
+# =================================================================================
+
 param([string]$rebootPreference)
+
+WriteHome 
 
 $forceNullFlagFile = "C:\ProgramData\ImmyBot\S1\s1_is_null.txt"
 if (Test-FilePath -Path $forceNullFlagFile) {
@@ -21,13 +30,17 @@ if ($null -eq $script:systemState) {
     Write-Host "[$ScriptName] Resuming with persisted system state from before reboot."
 }
 
+Start-Sleep -Seconds 5
 # --- For diagnostics, let's log the key reports we gathered ---
 Write-Host "`n--- Top-Level S1 Summary ---" -ForegroundColor Cyan
 $summaryObject = [ordered]@{ "Agent Is Present" = $script:systemState.S1Status.IsPresentAnywhere; "Version (Service)" = $script:systemState.S1Status.VersionFromService; "Version (sentinelctl)"= $script:systemState.S1Status.VersionFromCtl; "Agent ID" = $script:systemState.S1Status.AgentId }; New-Object -TypeName PSObject -Property $summaryObject | Format-List
-Write-Host "`n--- S1 Install Directory Report ---" -ForegroundColor Cyan
+Start-Sleep -Seconds 5
+Write-Host "`n--- S1 Install Directory Report ---"
 $script:systemState.S1Status.InstallDirectoryReport | Format-Table -AutoSize
+Start-Sleep -Seconds 5
 Write-Host "`n--- S1 Services Report ---" -ForegroundColor Cyan
 $script:systemState.S1Status.ServicesReport | Format-Table -AutoSize
+Start-Sleep -Seconds 5
 Write-Host "`n--- Reboot Requirements Report ---" -ForegroundColor Cyan
 # The RebootRequirements object from the helpers module is now "quiet" and flat, so Format-List is best.
 $script:systemState.RebootRequirements | Format-List
