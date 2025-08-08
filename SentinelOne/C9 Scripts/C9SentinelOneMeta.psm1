@@ -1,12 +1,9 @@
-# SentinelOne Meta Module
-# These functions are primarily used for SentinelOne Metascript to System Context interactions.
-# ==============================================================
-# Some key ImmyBot Metascript functions to facilitate Metascript to System Context communication are:
-#
-# Invoke-ImmyCommand - The default wrapper to run commands from the Metascript context on the endpoint System Context.
-# Start-ProcessWithLogTail and Start-ProcessWithLogTailContext - Built to solve the inherent of Start-Process and piping log output back to the Metascript context.
-# Restart-ComputerAndWait
-# 
+# =================================================================================
+# Name:     C9SentinelOneMeta Module
+# Author:   Josh Phillips
+# Contact:  josh@c9cg.com
+# Docs:     https://immydocs.c9cg.com
+# =================================================================================
 
 function Get-C9SentinelOneInfo {
     <#
@@ -38,17 +35,16 @@ function Get-C9SentinelOneInfo {
 
     $FunctionName = "Get-C9SentinelOneInfo"
 
-    ## Write-Host "[$ScriptName - $FunctionName] Querying endpoint for SentinelOne agent information..."
+    Write-Host -Fore Cyan "[$ScriptName - $FunctionName] Time to go hunting for the SentinelOne agent on the endpoint..."
 
     # This single Invoke-ImmyCommand call gathers all info from the endpoint in one go.
     $infoObject = Invoke-ImmyCommand -ScriptBlock {
-
-        # This logic is based on the proven detection script pattern.
+        Write-Host "[$ScriptName - $FunctionName] I'm inside an Invoke-ImmyCommand script block now...gonna use Get-CimInstance and look for some services..."
         $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='SentinelAgent'" -ErrorAction SilentlyContinue
 
         # If the service doesn't exist, the agent is not installed. Return $null.
         if (-not ($service -and $service.PathName)) {
-            Write-Warning "[$ScriptName - $FunctionName] SentinelAgent service not found on endpoint. Agent is not installed."
+            Write-Warning -Fore Orange "[$ScriptName - $FunctionName] SentinelAgent service not found on endpoint. Agent is not installed."
             return $null
         }
 
@@ -59,12 +55,12 @@ function Get-C9SentinelOneInfo {
 
         # Final validation: Ensure the paths reported by the service actually exist.
         if (-not (Test-Path -LiteralPath $agentExePath)) {
-            Write-Error "[$ScriptName - $FunctionName] Service found, but its executable path is invalid: $agentExePath"
+            Write-Warning  "[$ScriptName - $FunctionName] Service found, but its executable path is invalid: $agentExePath"
             return $null
         }
 
         if (-not (Test-Path -LiteralPath $sentinelCtlPath)) {
-            Write-Error "[$ScriptName - $FunctionName] Agent found, but sentinelctl.exe is missing from its directory: $sentinelCtlPath"
+            Write-Warning "[$ScriptName - $FunctionName] Agent found, but sentinelctl.exe is missing from its directory: $sentinelCtlPath"
             # We can still return info, but log the error. The caller can decide how to handle a missing ctl tool.
         }
 
@@ -86,9 +82,9 @@ function Get-C9SentinelOneInfo {
 
     # Log the outcome and return the object (or $null) to the calling script.
     if ($infoObject) {
-        ## Write-Host "[$ScriptName - $FunctionName] Successfully retrieved SentinelOne agent info. Version: $($infoObject.Version)"
+        Write-Host "[$ScriptName - $FunctionName] Oh baby. Successfully retrieved SentinelOne agent info. Version: $($infoObject.Version)"
     } else {
-        #Write-Warning "[$ScriptName - $FunctionName] Get-C9SentinelOneInfo did not find a valid agent installation on the endpoint."
+        Write-Warning "[$ScriptName - $FunctionName] We couldn't find a valid agent installation on the endpoint."
     }
     
     return $infoObject
@@ -224,20 +220,24 @@ function Get-C9SentinelCtl {
         [string]$Command
     )
 
-    # Execution logic - this remains the same but without the # Write-Host calls.
+    $FunctionName = "Get-C9SentinelCtl"
+
+    Write-Host -Fore Cyan "[$ScriptName - $FunctionName] I'm going to go look for SentinelCtl on the endpoint so I can run the command: $Command..."
     $s1Info = Get-C9SentinelOneInfo
     if (-not $s1Info -or -not $s1Info.SentinelCtlPath) {
         # We return $null on failure; the caller will see this and can log the error.
         return $null
     }
     $sentinelCtlPath = $s1Info.SentinelCtlPath
-    if (-not (Invoke-ImmyCommand -ScriptBlock { Test-Path $using:sentinelCtlPath })) {
+    if (-not (Invoke-ImmyCommand -ScriptBlock {
+        Test-Path $using:sentinelCtlPath }))
+        {
         return $null
     }
     
     $ctlResult = Invoke-C9EndpointCommand -FilePath $sentinelCtlPath -ArgumentList $Command
-
-    # Reporting logic - this remains the same.
+    Write-Host -Fore Green "[$ScriptName - $FunctionName] Found it. Did it. Here you go: $($ctlResult.StandardOutput)..."
+    Write-Host -Fore Green "[$ScriptName - $FunctionName] Oh...if you are wondering how I can do something so cool on an endpoint from the metascript context, check out Invoke-C9EndpointCommand in the C9MetascriptHelpers module..."
     $reportArray = @()
 
     $exitCodeObject = New-Object -TypeName PSObject
@@ -254,12 +254,26 @@ function Get-C9SentinelCtl {
         "status" {
             $outputLines = $ctlResult.StandardOutput -split '(?:\r\n|\r|\n)'
             foreach ($line in $outputLines) {
-                if ([string]::IsNullOrWhiteSpace($line)) { continue }
-                $rowObject = New-Object -TypeName PSObject; $key = ""; $value = ""
-                if ($line -like '*:*') { $key, $value = $line.Split(':', 2) } 
-                elseif ($line -like '* is loaded') { $parts = $line -split ' is loaded'; $key = "$($parts[0]) State"; $value = "loaded" } 
-                elseif ($line -like '* is running as *') { $parts = $line -split ' is running as '; $key = "$($parts[0]) Running State"; $value = $parts[1] } 
-                else { $key = "Uncategorized Status"; $value = $line }
+                if ([string]::IsNullOrWhiteSpace($line)) {
+                    continue
+                }
+                $rowObject = New-Object -TypeName PSObject
+                $key = ""
+                $value = ""
+                if ($line -like '*:*') {
+                    $key, $value = $line.Split(':', 2)
+                } elseif ($line -like '* is loaded') {
+                    $parts = $line -split ' is loaded'
+                    $key = "$($parts[0]) State"
+                    $value = "loaded"
+                } elseif ($line -like '* is running as *') {
+                    $parts = $line -split ' is running as '
+                    $key = "$($parts[0]) Running State"
+                    $value = $parts[1]
+                } else {
+                    $key = "Uncategorized Status"
+                    $value = $line
+                }
                 Add-Member -InputObject $rowObject -MemberType NoteProperty -Name 'Property' -Value $key.Trim()
                 Add-Member -InputObject $rowObject -MemberType NoteProperty -Name 'Value' -Value $value.Trim()
                 $reportArray += $rowObject
@@ -279,7 +293,7 @@ function Get-C9SentinelCtl {
         }
     }
     
-    # The function's final action is to return the clean data object.
+    Write-Host -Fore Green "[$ScriptName - $FunctionName] Here's the report array I made for you. I'm out!"
     return $reportArray
 }
 
@@ -514,9 +528,10 @@ function Get-C9S1ServiceState {
     [CmdletBinding()]
     param()
 
-    # --- We're making this function quiet, as per our last fix ---
-    # # Write-Host ...
+    $FunctionName = "Get-C9S1ServiceState"
 
+    Write-Host -Fore Cyan "[$ScriptName - $FunctionName] What do you say we use an Invoke-ImmyCommand block and go look for some S1 Services..."
+    Write-Host -Fore Cyan "[$ScriptName - $FunctionName] I agree. Splendid idea. Let's go..."
     $serviceReportList = Invoke-ImmyCommand -ScriptBlock {
         $serviceNames = @(
             "SentinelAgent",
@@ -530,10 +545,18 @@ function Get-C9S1ServiceState {
         foreach ($name in $serviceNames) {
             $service = Get-Service -Name $name -ErrorAction SilentlyContinue
             
-            # --- NEW, MORE DESCRIPTIVE LOGIC ---
-            $existence = if ($null -ne $service) { "Exists" } else { "Not Found" }
-            $runningState = if ($null -ne $service) { $service.Status.ToString() } else { "N/A" }
-            
+          
+            $existence = if ($null -ne $service) {
+                "Exists"
+            } else {
+                "Not Found"
+            }
+            $runningState = if ($null -ne $service) {
+                $service.Status.ToString()
+            } else {
+                "N/A"
+            }
+
             # Create a new custom object with the clear, unambiguous properties.
             # Using the ConstrainedLanguage-safe pattern.
             $serviceObject = New-Object -TypeName PSObject
@@ -546,7 +569,7 @@ function Get-C9S1ServiceState {
         return $reportArray
     }
 
-    # The function is quiet and just returns the data.
+    Write-Host -Fore Green "[$ScriptName - $FunctionName] I've got the service report list right here. Sending it back to you now..."
     return $serviceReportList
 }
 
@@ -570,15 +593,16 @@ function Get-C9S1InstallDirectoryState {
         [string]$InstallPath
     )
 
-    # This function is quiet. The calling script will do the logging.
+    $FunctionName = "Get-C9S1InstallDirectoryState"
 
+    Write-Host -Fore Cyan "[$ScriptName - $FunctionName] I'm going to use an Invoke-ImmyCommand block and go look at the file system..."
     $dirStateReport = Invoke-ImmyCommand -ScriptBlock {
         # Access the active install path from the calling Metascript context
         $activeInstallPath = $using:InstallPath
 
         $reportArray = @()
 
-        # --- NEW, INTELLIGENT PARSING LOGIC ---
+        Write-Host "[$ScriptName - $FunctionName] Gonna use a try block to see if I can figure out what's going on with: $activeInstallPath...I'll let you know what I found when I'm all finished..."
         try {
             # Find the parent folder (e.g., C:\Program Files\SentinelOne)
             $parentDir = Split-Path -Path $activeInstallPath -Parent
@@ -617,56 +641,77 @@ function Get-C9S1InstallDirectoryState {
         
         return $reportArray
     }
-
+    Write-Host -Fore Green "[$ScriptName - $FunctionName] To be honest, I'm not smart enough to understand everything I found, but here's the (possibly blank) report..."
     return $dirStateReport
 }
 
-function Get-C9ComprehensiveSystemState {
+function Get-C9S1ComprehensiveStatus {
     <#
     .SYNOPSIS
-        (Ultimate Get Orchestrator) Gathers all necessary state data from an endpoint.
+        (S1-Specific Get Orchestrator) Gathers all local SentinelOne agent status data.
     .DESCRIPTION
-        This is the single, definitive function for gathering the complete state of an endpoint for
-        our software management workflows. It orchestrates calls to the domain-specific master "Get"
-        functions (for S1, Reboot Requirements, and User Activity) and assembles their reports
-        into one final, all-encompassing data object. This is the first function any Test/Set
-        script should call.
+        This is a master "Get" function for all things related to the local S1 agent. It orchestrates
+        calls to specialist functions to get service state, file system state, and sentinelctl status,
+        then assembles them into a single, comprehensive data object.
+        This function is designed to be "quiet" and return only data, not perform logging itself.
+    .OUTPUTS
+        A PSCustomObject containing the complete local state of the SentinelOne agent.
     #>
     [CmdletBinding()]
     param()
 
-    # Announce the start of the entire data gathering process.
-    # Write-Host "==========================================================" -ForegroundColor Yellow
-    # Write-Host "--- BEGINNING ULTIMATE COMPREHENSIVE SYSTEM STATE ASSESSMENT ---" -ForegroundColor Yellow
+    $FunctionName = "Get-C9S1ComprehensiveStatus"
 
-    # Initialize the final, all-encompassing state object.
-    $systemState = New-Object -TypeName PSObject
-
-    # --- Step 1: Get S1 Agent Status ---
-    # Announce, then call the quiet function.
-    # Write-Host "`n--- Gathering S1 Agent Status... ---" -ForegroundColor Cyan
-    $s1Status = Get-C9S1ComprehensiveStatus
-    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'S1Status' -Value $s1Status
-
-    # --- Step 2: Get Pending Reboot Status ---
-    # Write-Host "`n--- Gathering Pending Reboot Requirements... ---" -ForegroundColor Cyan
-    $rebootReqs = Get-C9SystemRebootRequirements
-    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootRequirements' -Value $rebootReqs
+    Write-Host -Fore Cyan "[$ScriptName - $FunctionName] We're gonna do something I like to call "gettin a ton of SentinelOne info"..."
+    # Define the structure of our final data object
+    $s1Data = [ordered]@{
+        # Top-level summary properties
+        IsPresentAnywhere      = $false
+        VersionFromService     = $null
+        VersionFromCtl         = $null
+        AgentId                = $null
+        InstallPath            = $null
+        # Nested reports from specialist functions, which Format-C9ObjectForDisplay will handle
+        ServicesReport         = $null
+        InstallDirectoryReport = $null
+        SentinelCtlStatusReport= $null
+    }
     
-    # --- Step 3: Get User Activity Status ---
-    # Write-Host "`n--- Gathering User Activity Status... ---" -ForegroundColor Cyan
-    $userActivity = Get-C9UserActivityStatus
-    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'UserActivity' -Value $userActivity
+    # Start with the most basic check. If this fails, the agent is not installed.
+    $baseInfo = Get-C9SentinelOneInfo
+    if (-not $baseInfo) {
+        # Return the default object with IsPresentAnywhere = $false
+        return New-Object -TypeName PSObject -Property $s1Data
+    }
 
-    # The platform reboot policy is simple enough to gather here directly.
-    $rebootPolicy = Get-C9RebootPolicyContext
-    Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootPolicy' -Value $rebootPolicy
+    Write-Host "[$ScriptName - $FunctionName] Found the SentinelOne agent. Let's gather all the details now..."
+    $s1Data.IsPresentAnywhere  = $true
+    $s1Data.VersionFromService = $baseInfo.Version
+    $s1Data.InstallPath        = $baseInfo.InstallPath
     
-    # Write-Host "==========================================================" -ForegroundColor Yellow
-    # Write-Host "--- ULTIMATE COMPREHENSIVE SYSTEM STATE ASSESSMENT COMPLETE ---" -ForegroundColor Yellow
+    Write-Host "[$ScriptName - $FunctionName] Now I'm gonna call some helper functions take us to some other places to get more stuff..."
+    $s1Data.ServicesReport = Get-C9S1ServiceState
+    $s1Data.InstallDirectoryReport = Get-C9S1InstallDirectoryState -InstallPath $baseInfo.InstallPath
     
-    # Return the final, all-encompassing object.
-    return $systemState
+    $ctlStatusReport = Get-C9SentinelCtl -Command "status"
+    $s1Data.SentinelCtlStatusReport = $ctlStatusReport
+    
+    # Extract the version from the sentinelctl status report for comparison.
+    $ctlVersionLine = $ctlStatusReport | Where-Object { $_.Property -eq 'Monitor Build id' } | Select-Object -First 1
+    if ($ctlVersionLine) {
+        # The value is like "24.2.3.471+f00b4r". We want to strip the build hash.
+        $s1Data.VersionFromCtl = ($ctlVersionLine.Value -split '\+')[0].Trim()
+    }
+
+    # Extract the Agent ID from a separate sentinelctl call.
+    $ctlAgentIdReport = Get-C9SentinelCtl -Command "agent_id"
+    $agentIdLine = $ctlAgentIdReport | Where-Object { $_.Property -eq 'Agent ID' } | Select-Object -First 1
+    if ($agentIdLine) {
+        $s1Data.AgentId = $agentIdLine.Value
+    }
+    
+    Write-Host -Fore Green "[$ScriptName - $FunctionName] We're done. I think we did good. Here's the final report object..."
+    return New-Object -TypeName PSObject -Property $s1Data
 }
 
 Export-ModuleMember -Function *
