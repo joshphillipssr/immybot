@@ -2087,59 +2087,63 @@ function Format-C9ObjectForDisplay {
             }
         }).Trim()
     }
-    # =========================================================================
-    # --- END CORRECTED SECTION ---
-    # =========================================================================
-
-    # The rest of the function logic remains the same.
+   
     foreach ($topLevelProperty in $InputObject.PSObject.Properties) {
         $topLevelName = $topLevelProperty.Name
         $topLevelValue = $topLevelProperty.Value
 
-        if ($topLevelValue -is [System.Management.Automation.PSCustomObject] -and $topLevelValue.PSObject.Properties.Count -gt 0) {
+        if (($topLevelValue -is [System.Management.Automation.PSCustomObject] -or $topLevelValue -is [array]) -and $topLevelValue.Count -gt 0) {
             $categoryName = ConvertTo-TitleCase $topLevelName
-            foreach ($innerProperty in $topLevelValue.PSObject.Properties) {
-                $propName = $innerProperty.Name
-                $propValue = $innerProperty.Value
-                $displayValue = ""
-                if ($null -eq $propValue) {
-                    $displayValue = "(not set)"
-                } elseif ($propValue -is [bool]) {
-                    $displayValue = if ($propValue) { "[TRUE]" } else { "[FALSE]" }
-                } elseif ($propValue -is [array]) {
-                    $displayValue = $propValue -join ", "
-                    if ([string]::IsNullOrWhiteSpace($displayValue)) {
-                        $displayValue = "(empty list)"
-                    }
-                } else {
-                    $displayValue = "$propValue"
+            foreach ($item in [array]$topLevelValue) {
+                if ($item -isnot [System.Management.Automation.PSCustomObject]) {
+                    continue
                 }
-                $row = New-Object -TypeName PSObject
-                Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $categoryName
-                Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase -str $propName)
-                Add-Member -InputObject $row -MemberType NoteProperty -Name 'Value' -Value $displayValue
-                $displayRows += $row
+                if ($item.PSObject.Properties.Name -contains 'Property' -and $item.PSObject.Properties.Name -contains 'Value') {
+                    $propName = $item.Property
+                    $propValue = $item.Value
+                    $row = New-Object -TypeName PSObject
+                    Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $categoryName
+                    Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase -str $propName)
+                    Add-Member -InputObject $row -MemberType NoteProperty -Name 'Value' -Value "$propValue"
+                    $displayRows += $row
+                } else {
+                    foreach ($innerProperty in $item.PSObject.Properties) {
+                        $propName = $innerProperty.Name
+                        $propValue = $innerProperty.Value
+                        $displayValue = if ($null -eq $propValue) { "(not set)" }
+                        elseif ($propValue -is [bool]) {
+                            if ($propValue) {
+                                "[TRUE]"
+                            } else {
+                                "[FALSE]"
+                            }
+                        } else {
+                            "$propValue"
+                        }
+                        $row = New-Object -TypeName PSObject
+                        Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $categoryName
+                        Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase -str $propName)
+                        Add-Member -InputObject $row -MemberType NoteProperty -Name 'Value' -Value $displayValue
+                        $displayRows += $row
+                    }
+                }
             }
         } else {
             $propName = $topLevelName
             $propValue = $topLevelValue
-            $displayValue = ""
-            if ($null -eq $propValue) {
-                $displayValue = "(not set)"
-            } elseif ($propValue -is [bool]) {
-                $displayValue = if ($propValue) {
+            $displayValue = if ($null -eq $propValue) { "(not set)" }
+            elseif ($propValue -is [bool]) {
+                if ($propValue) {
                     "[TRUE]"
                 } else {
                     "[FALSE]"
                 }
             } elseif ($propValue -is [array]) {
-                $displayValue = $propValue -join ", "
-                if ([string]::IsNullOrWhiteSpace($displayValue)) {
-                    $displayValue = "(empty list)"
-                }
+                ($propValue -join ', ')
             } else {
-                $displayValue = "$propValue"
+                "$propValue"
             }
+            ### FIX #3: Replaced [PSCustomObject] with ConstrainedLanguage-safe object creation ###
             $row = New-Object -TypeName PSObject
             Add-Member -InputObject $row -MemberType NoteProperty -Name 'Category' -Value $DefaultCategory
             Add-Member -InputObject $row -MemberType NoteProperty -Name 'Property' -Value (ConvertTo-TitleCase -str $propName)

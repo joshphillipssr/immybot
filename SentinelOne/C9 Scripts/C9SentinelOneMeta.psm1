@@ -211,15 +211,21 @@ function Get-C9SentinelCtl {
     $ctlResult = Invoke-C9EndpointCommand -FilePath $sentinelCtlPath -ArgumentList $Command
     Write-Host "[$ScriptName - $FunctionName] Found it. Did it. Here you go: $($ctlResult.StandardOutput.Trim())"
     Write-Host "[$ScriptName - $FunctionName] Almost forgot to mention...if you are wondering how I can do something so cool on an endpoint from the metascript context, check out Invoke-C9EndpointCommand in the C9MetascriptHelpers module..."
+    
     $reportArray = @()
+
     $exitCodeObject = New-Object -TypeName PSObject
-    Add-Member $exitCodeObject 'Property' 'Execution Exit Code'
-    Add-Member $exitCodeObject 'Value' "$($ctlResult.ExitCode)"
+    Add-Member -InputObject $exitCodeObject -MemberType NoteProperty -Name 'Property' -Value 'Execution Exit Code'
+    Add-Member -InputObject $exitCodeObject -MemberType NoteProperty -Name 'Value' -Value "$($ctlResult.ExitCode)"
+    
     $reportArray += $exitCodeObject
+    
     $successObject = New-Object -TypeName PSObject
-    Add-Member $successObject 'Property' 'Execution Was Successful'
-    Add-Member $successObject 'Value' "$($ctlResult.ExitCode -eq 0)"
+    Add-Member -InputObject $successObject -MemberType NoteProperty -Name 'Property' -Value 'Execution Was Successful'
+    Add-Member -InputObject $successObject -MemberType NoteProperty -Name 'Value' -Value ($ctlResult.ExitCode -eq 0)
+    
     $reportArray += $successObject
+    
     switch ($Command) {
         "status" {
             $outputLines = $ctlResult.StandardOutput -split '(?:\r\n|\r|\n)'
@@ -251,14 +257,14 @@ function Get-C9SentinelCtl {
         }
         "agent_id" {
             $rowObject = New-Object PSObject
-            Add-Member $rowObject 'Property' 'Agent ID'
-            Add-Member $rowObject 'Value' $ctlResult.StandardOutput.Trim()
+            Add-Member -InputObject $rowObject -MemberType NoteProperty -Name 'Property' -Value 'Agent ID'
+            Add-Member -InputObject $rowObject -MemberType NoteProperty -Name 'Value' -Value $ctlResult.StandardOutput.Trim()
             $reportArray += $rowObject
         }
         default {
             $rowObject = New-Object PSObject
-            Add-Member $rowObject 'Property' "Output from '$Command'"
-            Add-Member $rowObject 'Value' $ctlResult.StandardOutput.Trim()
+            Add-Member -InputObject $rowObject -MemberType NoteProperty -Name "Property" -Value "Output from '$Command'"
+            Add-Member -InputObject $rowObject -MemberType NoteProperty -Name "Value" -Value $ctlResult.StandardOutput.Trim()
             $reportArray += $rowObject
         }
     }
@@ -649,7 +655,7 @@ function Get-C9S1ComprehensiveStatus {
         Write-Warning "[$ScriptName - $FunctionName] No S1 agent found. Returning empty report."
         return New-Object -TypeName PSObject -Property $s1Data
     }
-    Write-Host -Fore Blue"[$ScriptName - $FunctionName] Found the SentinelOne agent. Let's gather all the details now..."
+    Write-Host -Fore Blue "[$ScriptName - $FunctionName] Found the SentinelOne agent. Let's gather all the details now..."
     $s1Data.IsPresentAnywhere  = $true
     $s1Data.VersionFromService = $baseInfo.Version
     $s1Data.InstallPath = $baseInfo.InstallPath
