@@ -7,7 +7,8 @@
 
 param([string]$rebootPreference)
 
-WriteHome 
+$VerbosePreference = 'Continue'
+$DebugPreference = 'Continue'
 
 $forceNullFlagFile = "C:\ProgramData\ImmyBot\S1\s1_is_null.txt"
 if (Test-FilePath -Path $forceNullFlagFile) {
@@ -15,15 +16,13 @@ if (Test-FilePath -Path $forceNullFlagFile) {
     return $false
 }
 
-# --- THIS IS THE FIX ---
-# Import ALL modules needed for the entire script's operation.
 Import-Module "C9MetascriptHelpers"
 Import-Module "C9SentinelOneMeta"
 
 # =========================================================================
 # --- Phase 0: The Ultimate Get ---
 # =========================================================================
-# This phase now correctly uses functions from BOTH modules.
+
 if ($null -eq $script:systemState) {
     $script:systemState = Get-C9ComprehensiveSystemState
 } else {

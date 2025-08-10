@@ -59,26 +59,26 @@ if ($null -eq $script:systemState) {
 }
 
 # Determine early if a reboot will be mandatory post-uninstall.
-$rebootWillBeRequired = $script:systemState.S1Status.IsPresentAnywhere
+#$rebootWillBeRequired = $script:systemState.S1Status.IsPresentAnywhere
 
 # =========================================================================
 # --- Phase 1: Intelligent Playbook Selection ---
 # =========================================================================
-Write-Host "[$ScriptName] Phase 1: Selecting uninstall playbook based on agent and system status..."
-
-$playbook = "None" 
-
-if (-not $script:systemState.S1Status.IsPresentAnywhere) {
-    $playbook = "RemnantCleanup"
-    Write-Host "[$ScriptName] [PLAYBOOK: Remnant Cleanup] No agent detected."
-} elseif ($script:systemState.S1Status.IsConsideredHealthy -and $script:systemState.CloudCredentials.HasPassphrase) {
-    $playbook = "StandardUninstall"
-    Write-Host "[$ScriptName] [PLAYBOOK: Standard Uninstall] Agent is healthy and managed. Will perform graceful removal."
-} else {
-    $playbook = "ForcedRemoval"
-    Write-Host "[$ScriptName] [PLAYBOOK: Forced Removal] Agent is unhealthy or orphaned. Will attempt aggressive removal."
-}
-Write-Host "[$ScriptName] Phase 1 Complete. Proceeding with playbook: $playbook"
+#Write-Host "[$ScriptName] Phase 1: Selecting uninstall playbook based on agent and system status..."
+#
+#$playbook = "None" 
+#
+#if (-not $script:systemState.S1Status.IsPresentAnywhere) {
+#    $playbook = "RemnantCleanup"
+#    Write-Host "[$ScriptName] [PLAYBOOK: Remnant Cleanup] No agent detected."
+#} elseif ($script:systemState.S1Status.IsConsideredHealthy -and $script:systemState.CloudCredentials.HasPassphrase) {
+#    $playbook = "StandardUninstall"
+#    Write-Host "[$ScriptName] [PLAYBOOK: Standard Uninstall] Agent is healthy and managed. Will perform graceful removal."
+#} else {
+#    $playbook = "ForcedRemoval"
+#    Write-Host "[$ScriptName] [PLAYBOOK: Forced Removal] Agent is unhealthy or orphaned. Will attempt aggressive removal."
+#}
+#Write-Host "[$ScriptName] Phase 1 Complete. Proceeding with playbook: $playbook"
 
 # =========================================================================
 # --- Phase 2: Execute Uninstallation Playbook ---
@@ -95,65 +95,65 @@ try {
     Test-C9MsiExecMutex
     
     # --- Use the pre-gathered state for the reboot decision ---
-    $clearPendingDecision = Test-C9RebootDecision -Scenario ClearPending -SystemState $script:systemState -OverrideSuppression $true
-    
-    if ($clearPendingDecision.ShouldReboot) {
-        Write-Host "[$ScriptName] [ACTION] Clearing pending reboot before uninstall..."
-        Restart-ComputerAndWait -TimeoutDuration (New-TimeSpan -Minutes 15)
-        $script:systemState = $null # Invalidate state to force re-check
-        throw "Halting execution after pre-flight reboot to ensure fresh state analysis on next run."
-    } elseif (-not $clearPendingDecision.ShouldProceed) {
-        throw "[$ScriptName] HALT: Cannot clear pending reboot safely. Reason: $($clearPendingDecision.Reason)"
-    }
+    #$clearPendingDecision = Test-C9RebootDecision -Scenario ClearPending -SystemState $script:systemState -OverrideSuppression $true
+    #
+    #if ($clearPendingDecision.ShouldReboot) {
+    #    Write-Host "[$ScriptName] [ACTION] Clearing pending reboot before uninstall..."
+    #    Restart-ComputerAndWait -TimeoutDuration (New-TimeSpan -Minutes 15)
+    #    $script:systemState = $null # Invalidate state to force re-check
+    #    throw "Halting execution after pre-flight reboot to ensure fresh state analysis on next run."
+    #} elseif (-not $clearPendingDecision.ShouldProceed) {
+    #    throw "[$ScriptName] HALT: Cannot clear pending reboot safely. Reason: $($clearPendingDecision.Reason)"
+    #}
     
     # --- Execute the selected playbook ---
-    switch ($playbook) {
-        "RemnantCleanup" {
-            Write-Host "[$ScriptName] Executing Remnant Cleanup. No invasive actions needed."
-        }
-        "StandardUninstall" {
-            Write-Host "[$ScriptName] Executing Standard Uninstall. Attempting 'sentinelctl.exe unprotect'..."
-            Set-C9SentinelOneUnprotect -Passphrase $script:systemState.CloudCredentials.Passphrase
-        }
-        "ForcedRemoval" {
-            Write-Host "[$ScriptName] Executing Forced Removal..."
-            if ($script:systemState.CloudCredentials.HasPassphrase -and $script:systemState.S1Status.InstallFolderState.SentinelCtlExists -and $script:systemState.S1Status.SentinelCtlStatus.IsHealthy) {
-                Write-Host "[$ScriptName] Attempting best-effort 'sentinelctl.exe unprotect'..."
-                try {
-                    Set-C9SentinelOneUnprotect -Passphrase $script:systemState.CloudCredentials.Passphrase
-                } catch {
-                    Write-Warning "Best-effort unprotect failed. Continuing..."
-                }
-            } else {
-                Write-Warning "[$ScriptName] Skipping unprotect step (no passphrase, or sentinelctl.exe is missing/unhealthy)."
-            }
-        }
-    }
+    #switch ($playbook) {
+    #    "RemnantCleanup" {
+    #        Write-Host "[$ScriptName] Executing Remnant Cleanup. No invasive actions needed."
+    #    }
+    #    "StandardUninstall" {
+    #        Write-Host "[$ScriptName] Executing Standard Uninstall. Attempting 'sentinelctl.exe unprotect'..."
+    #        Set-C9SentinelOneUnprotect -Passphrase $script:systemState.CloudCredentials.Passphrase
+    #    }
+    #    "ForcedRemoval" {
+    #        Write-Host "[$ScriptName] Executing Forced Removal..."
+    #        if ($script:systemState.CloudCredentials.HasPassphrase -and $script:systemState.S1Status.InstallFolderState.SentinelCtlExists -and $script:systemState.S1Status.SentinelCtlStatus.IsHealthy) {
+    #            Write-Host "[$ScriptName] Attempting best-effort 'sentinelctl.exe unprotect'..."
+    #            try {
+    #                Set-C9SentinelOneUnprotect -Passphrase $script:systemState.CloudCredentials.Passphrase
+    #            } catch {
+    #                Write-Warning "Best-effort unprotect failed. Continuing..."
+    #            }
+    #        } else {
+    #            Write-Warning "[$ScriptName] Skipping unprotect step (no passphrase, or sentinelctl.exe is missing/unhealthy)."
+    #        }
+    #    }
+    #}
 
     # --- Core cleaner execution ---
-    if ($playbook -ne "RemnantCleanup") {
-        if ($script:systemState.CloudCredentials.HasSiteToken) {
-            $siteTokenForEndpoint = $script:systemState.CloudCredentials.SiteToken # Create simple variable
-            Write-Host "[$ScriptName] Site token found. Proceeding with modern cleaner..."
-
-            $exitCodeFile = "C:\Windows\Temp\s1_uninstall_exit_code.txt"
-            $tempUninstallDir = "C:\Temp\S1_Uninstall_$(Get-Date -f yyyyMMdd-hhmmss)"
-    
-            Invoke-ImmyCommand -Timeout 1200 -ScriptBlock {
-                $source = (Get-Item "C:\ProgramData\ImmyBot\S1\Installer\SentinelOneInstaller*.exe").FullName
-                New-Item -ItemType Directory -Path $using:tempUninstallDir -Force | Out-Null
-                $destination = Join-Path -Path $using:tempUninstallDir -ChildPath (Split-Path $source -Leaf)
-                Copy-Item -Path $source -Destination $destination -Force
-                $cleanerArgs = "-c -q -t `"$($using:siteTokenForEndpoint)`"" 
-                $InstallProcess = Start-Process -NoNewWindow -PassThru -Wait -FilePath $destination -ArgumentList $cleanerArgs
-                $LASTEXITCODE | Out-File -FilePath $using:exitCodeFile -Encoding ascii
-            }
-            $cleanerExitCode = Get-Content -Path $exitCodeFile
-            Write-Host "[$ScriptName] Cleaner process finished with Exit Code: $cleanerExitCode"
-        } else {
-            Write-Warning "[$ScriptName] SKIPPED: The modern cleaner method requires a site token."
-        }
-    }
+    #if ($playbook -ne "RemnantCleanup") {
+    #    if ($script:systemState.CloudCredentials.HasSiteToken) {
+    #        $siteTokenForEndpoint = $script:systemState.CloudCredentials.SiteToken # Create simple variable
+    #        Write-Host "[$ScriptName] Site token found. Proceeding with modern cleaner..."
+    #
+    #        $exitCodeFile = "C:\Windows\Temp\s1_uninstall_exit_code.txt"
+    #        $tempUninstallDir = "C:\Temp\S1_Uninstall_$(Get-Date -f yyyyMMdd-hhmmss)"
+    # 
+    #        Invoke-ImmyCommand -Timeout 1200 -ScriptBlock {
+    #            $source = (Get-Item "C:\ProgramData\ImmyBot\S1\Installer\SentinelOneInstaller*.exe").FullName
+    #            New-Item -ItemType Directory -Path $using:tempUninstallDir -Force | Out-Null
+    #            $destination = Join-Path -Path $using:tempUninstallDir -ChildPath (Split-Path $source -Leaf)
+    #            Copy-Item -Path $source -Destination $destination -Force
+    #            $cleanerArgs = "-c -q -t `"$($using:siteTokenForEndpoint)`"" 
+    #            $InstallProcess = Start-Process -NoNewWindow -PassThru -Wait -FilePath $destination -ArgumentList $cleanerArgs
+    #            $LASTEXITCODE | Out-File -FilePath $using:exitCodeFile -Encoding ascii
+    #        }
+    #        $cleanerExitCode = Get-Content -Path $exitCodeFile
+    #        Write-Host "[$ScriptName] Cleaner process finished with Exit Code: $cleanerExitCode"
+    #    } else {
+    #        Write-Warning "[$ScriptName] SKIPPED: The modern cleaner method requires a site token."
+    #    }
+    #}
 
     # =========================================================================
     # --- Phase 3: Post-Uninstall Reboot ---

@@ -37,9 +37,9 @@ function Get-C9SentinelOneInfo {
     $DebugPreference = 'Continue'
 
     $FunctionName = "Get-C9SentinelOneInfo"
-    Write-Host -Fore Blue "[$ScriptName - $FunctionName] Time to go hunting for the SentinelOne agent on the endpoint..."
+    Write-Host  "[$ScriptName - $FunctionName] Time to go hunting for the SentinelOne agent on the endpoint..."
     $infoObject = Invoke-ImmyCommand -ScriptBlock {
-        Write-Host -Fore Blue "[$ScriptName - $FunctionName] I'm inside an Invoke-ImmyCommand script block now...gonna use Get-CimInstance and look for some services..."
+        Write-Host  "[$ScriptName - $FunctionName] I'm inside an Invoke-ImmyCommand script block now...gonna use Get-CimInstance and look for some services..."
         $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='SentinelAgent'" -ErrorAction SilentlyContinue
         if (-not ($service -and $service.PathName)) {
             return $null
@@ -63,6 +63,198 @@ function Get-C9SentinelOneInfo {
     if ($infoObject) {
         Write-Host "[$ScriptName - $FunctionName] Oh baby. Successfully retrieved SentinelOne agent info. Version: $($infoObject.Version)" }
     return $infoObject
+}
+
+function Get-C9S1ServiceState {
+    <#
+    .SYNOPSIS
+        (Specialist) Gets the existence and running state of the four core S1 services.
+    .DESCRIPTION
+        This function reports which of the four core S1 services exist and, if they
+        do exist, what their current running state is. It returns an array of objects
+        with clear 'Existence' and 'RunningState' properties for unambiguous analysis.
+    .OUTPUTS
+        An array of PSCustomObjects, with 'Service', 'Existence', and 'RunningState' properties.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'  
+
+    $FunctionName = "Get-C9S1ServiceState"
+
+    $ScriptName = "C9SentinelOneMeta"
+    Write-Host  "[$ScriptName - $FunctionName] What do you say we use an Invoke-ImmyCommand block and go look for some S1 Services..."
+    Write-Host  "[$ScriptName - $FunctionName] Sweet. I'm glad you agree. Let's go..."
+    $serviceReportList = Invoke-ImmyCommand -ScriptBlock {
+        $serviceNames = @(
+            "SentinelAgent"
+            "SentinelHelperService"
+            "SentinelStaticEngine"
+            "LogProcessorService"
+        )
+        $reportArray = @()
+        foreach ($name in $serviceNames) {
+            $service = Get-Service -Name $name -ErrorAction SilentlyContinue
+            $existence = if ($null -ne $service) {
+                "Exists"
+            } else {
+                "Not Found"
+            }
+            $runningState = if ($null -ne $service) {
+                $service.Status.ToString()
+            } else {
+                "N/A"
+            }
+            $serviceObject = New-Object -TypeName PSObject
+            Add-Member -InputObject $serviceObject -MemberType NoteProperty -Name 'Service' -Value $name
+            Add-Member -InputObject $serviceObject -MemberType NoteProperty -Name 'Existence' -Value $existence
+            Add-Member -InputObject $serviceObject -MemberType NoteProperty -Name 'RunningState' -Value $runningState
+            $reportArray += $serviceObject
+        }
+        return $reportArray
+    }
+    Write-Host  "[$ScriptName - $FunctionName] I've got the service report list right here. Sending it back to you now..."
+    return $serviceReportList
+}
+
+function Get-C9S1InstallDirectoryState {
+    <#
+    .SYNOPSIS
+        (Specialist) Performs an exhaustive file system state check for all S1 installations.
+    .DESCRIPTION
+        This function identifies the parent Sentinel* folder and all of its children. It distinguishes
+        between the "active" installation folder and any other (potentially orphaned) folders. It provides
+        a file count for both the active folder and a sum of all other folders, which is a key
+        diagnostic indicator for parallel/broken installations.
+    .PARAMETER InstallPath
+        The installation path of the currently active agent.
+    .OUTPUTS
+        An array of PSCustomObjects, formatted to produce a clean, vertical diagnostic report.
+    #>
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$InstallPath
+    )
+
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
+
+    $FunctionName = "Get-C9S1InstallDirectoryState"
+
+    Write-Host "[$ScriptName - $FunctionName] I'm going to use an Invoke-ImmyCommand block and go look at the file system..."
+    $dirStateReport = Invoke-ImmyCommand -ScriptBlock {
+        $activeInstallPath = $using:InstallPath; $reportArray = @()
+        Write-Host "[$ScriptName - $FunctionName] Gonna use a try block to see if I can figure out what's going on with: $activeInstallPath...I'll let you know what I found when I'm all finished otherwise this is gonna get noisy..."
+        try {
+            $parentDir = Split-Path -Path $activeInstallPath -Parent
+            $activeChildName = Split-Path -Path $activeInstallPath -Leaf
+            $allChildDirs = Get-ChildItem -Path $parentDir -Directory -ErrorAction SilentlyContinue
+            $otherChildDirs = $allChildDirs | Where-Object {
+                $_.Name -ne $activeChildName
+            }
+            $activeFolderFileCount = (Get-ChildItem -Path $activeInstallPath -File -Recurse -ErrorAction SilentlyContinue).Count
+            $otherFoldersFileCount = 0
+            if ($otherChildDirs) {
+                foreach ($otherDir in $otherChildDirs) {
+                    $otherFoldersFileCount += (Get-ChildItem -Path $otherDir.FullName -File -Recurse -ErrorAction SilentlyContinue).Count
+                }
+            }
+            $row1 = New-Object -TypeName PSObject
+            Add-Member -InputObject $row1 'Property' 'Installation Folder (Parent)'
+            Add-Member -InputObject $row1 'Value' $parentDir
+            $reportArray += $row1
+            $row2 = New-Object -TypeName PSObject
+            Add-Member -InputObject $row2 'Property' 'Install Folder (Child)'
+            Add-Member -InputObject $row2 'Value' $activeChildName
+            $reportArray += $row2
+            $row3 = New-Object -TypeName PSObject
+            Add-Member -InputObject $row3 'Property' 'Number of additional child folders'
+            Add-Member -InputObject $row3 'Value' "$($otherChildDirs.Count)"
+            $reportArray += $row3
+            $row4 = New-Object -TypeName PSObject
+            Add-Member -InputObject $row4 'Property' 'Install Folder Total Files'
+            Add-Member -InputObject $row4 'Value' "$activeFolderFileCount"
+            $reportArray += $row4
+            $row5 = New-Object -TypeName PSObject
+            Add-Member -InputObject $row5 'Property' 'Other Child Folder Total Files'
+            Add-Member -InputObject $row5 'Value' "$($otherFoldersFileCount)"
+            $reportArray += $row5
+        } catch {
+            $errorRow = New-Object -TypeName PSObject
+            Add-Member -InputObject $errorRow 'Property' 'FileSystem Analysis'
+            Add-Member -InputObject $errorRow 'Value' "Error: $($_.Exception.Message)"
+            $reportArray += $errorRow
+        }
+        return $reportArray
+    }
+    Write-Host "[$ScriptName - $FunctionName] To be honest, I'm not smart enough to understand everything I found, but here's the (possibly blank) report..."
+    return $dirStateReport
+}
+
+function Get-C9S1ComprehensiveStatus {
+    <#
+    .SYNOPSIS
+        (S1-Specific Get Orchestrator) Gathers all local SentinelOne agent status data.
+    .DESCRIPTION
+        This is a master "Get" function for all things related to the local S1 agent. It orchestrates
+        calls to specialist functions to get service state, file system state, and sentinelctl status,
+        then assembles them into a single, comprehensive data object.
+        This function is designed to be "quiet" and return only data, not perform logging itself.
+    .OUTPUTS
+        A PSCustomObject containing the complete local state of the SentinelOne agent.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $VerbosePreference = 'Continue'
+    $DebugPreference = 'Continue'
+
+    $FunctionName = "Get-C9S1ComprehensiveStatus"
+
+    Write-Host  "[$ScriptName - $FunctionName] We're gonna do something I like to call...gettin' a ton of SentinelOne info..."
+    $s1Data = [ordered]@{
+        IsPresentAnywhere = $false
+        VersionFromService = $null
+        VersionFromCtl = $null
+        AgentId = $null
+        InstallPath = $null
+        ServicesReport = $null
+        InstallDirectoryReport = $null
+        SentinelCtlStatusReport = $null
+    }
+    $baseInfo = Get-C9SentinelOneInfo
+    if (-not $baseInfo) {
+        Write-Warning "[$ScriptName - $FunctionName] No S1 agent found. Returning empty report."
+        return New-Object -TypeName PSObject -Property $s1Data
+    }
+    Write-Host  "[$ScriptName - $FunctionName] Found the SentinelOne agent. Let's gather all the details now..."
+    $s1Data.IsPresentAnywhere  = $true
+    $s1Data.VersionFromService = $baseInfo.Version
+    $s1Data.InstallPath = $baseInfo.InstallPath
+    Write-Host  "[$ScriptName - $FunctionName] Now I'm gonna call some helper functions take us to some other places to get more stuff..."
+    $s1Data.ServicesReport = Get-C9S1ServiceState
+    $s1Data.InstallDirectoryReport = Get-C9S1InstallDirectoryState -InstallPath $baseInfo.InstallPath
+    $ctlStatusReport = Get-C9SentinelCtl -Command "status"
+    $s1Data.SentinelCtlStatusReport = $ctlStatusReport
+    $ctlVersionLine = $ctlStatusReport | Where-Object {
+        $_.Property -eq 'Monitor Build id'
+    } | Select-Object -First 1
+    if ($ctlVersionLine) {
+        $s1Data.VersionFromCtl = ($ctlVersionLine.Value -split '\+')[0].Trim()
+    }
+    $ctlAgentIdReport = Get-C9SentinelCtl -Command "agent_id"
+    $agentIdLine = $ctlAgentIdReport | Where-Object {
+        $_.Property -eq 'Agent ID'
+    } | Select-Object -First 1
+    if ($agentIdLine) {
+        $s1Data.AgentId = $agentIdLine.Value
+    }
+    Write-Host  "[$ScriptName - $FunctionName] We're done. I think we did good. Here's the final report object..."
+    return New-Object -TypeName PSObject -Property $s1Data
 }
 
 function Get-C9SentinelOneVersion {
@@ -130,9 +322,9 @@ function Get-C9SentinelOneVersion {
     }
 
     if ($version) {
-        # Write-Host "[$ScriptName - $FunctionName] Successfully retrieved version: $version"
+        Write-Host "[$ScriptName - $FunctionName] Successfully retrieved version: $version"
     } else {
-        # Write-Host "[$ScriptName - $FunctionName] SentinelOne agent not found or version could not be determined."
+        Write-Host "[$ScriptName - $FunctionName] SentinelOne agent not found or version could not be determined."
     }
 
     return $version
@@ -173,7 +365,7 @@ function Get-C9S1EndpointData {
         # The output of this function is the final return value of this script.
         $healthReport = Get-C9S1LocalHealthReport
 
-        # Write-Host "[$ScriptName - $FunctionName] Successfully generated health report. Returning data object."
+        Write-Host "[$ScriptName - $FunctionName] Successfully generated health report. Returning data object."
         
         # Returning the object is the last action. ImmyBot will capture this.
         return $healthReport
@@ -206,7 +398,7 @@ function Get-C9SentinelCtl {
 
     $FunctionName = "Get-C9SentinelCtl"
 
-    Write-Host -Fore Blue "[$ScriptName - $FunctionName] I'm going to go look for SentinelCtl on the endpoint so I can run the command: $Command..."
+    Write-Host  "[$ScriptName - $FunctionName] I'm going to go look for SentinelCtl on the endpoint so I can run the command: $Command..."
     $s1Info = Get-C9SentinelOneInfo
     if (-not $s1Info -or -not $s1Info.SentinelCtlPath) {
         return $null
@@ -426,7 +618,7 @@ function Resolve-InstallerAvailable {
     } -ArgumentList $destinationPath
     
     if ($fileExists) {
-        # Write-Host "[$ScriptName - $FunctionName] File '$FileName' already exists in staging directory. Skipping download."
+        Write-Host "[$ScriptName - $FunctionName] File '$FileName' already exists in staging directory. Skipping download."
         return $destinationPath
     }
 
@@ -467,7 +659,7 @@ function Set-C9SentinelOneUnprotect {
     # Write-Host "[$ScriptName - $FunctionName] Attempting to locate the SentinelOne agent..."
     $s1Info = Get-C9SentinelOneInfo
     if (-not $s1Info) {
-        throw "Cannot unprotect agent: SentinelOne agent was not found on the endpoint."
+        throw "[$ScriptName - $FunctionName] Cannot unprotect agent: SentinelOne agent was not found on the endpoint."
     }
 
     # Step 2: Prepare and execute the command using our robust command wrapper
@@ -477,20 +669,20 @@ function Set-C9SentinelOneUnprotect {
 
     # Step 3: Intelligent Error Handling
     if ($result.ExitCode -ne 0) {
-        throw "Failed to unprotect SentinelOne agent. The sentinelctl.exe process returned exit code: $($result.ExitCode). Error Output: $($result.StandardError)"
+        throw "[$ScriptName - $FunctionName] Failed to unprotect SentinelOne agent. The sentinelctl.exe process returned exit code: $($result.ExitCode). Error Output: $($result.StandardError)"
     }
     
     # Ignore known, benign warnings from sentinelctl.exe
     if ($result.StandardError -and $result.StandardError -notmatch 'In-Process Client') {
-        throw "An unexpected error was reported by sentinelctl.exe during unprotect: $($result.StandardError)"
+        throw "[$ScriptName - $FunctionName] An unexpected error was reported by sentinelctl.exe during unprotect: $($result.StandardError)"
     }
     
     # Step 4: Final validation
     if ($result.StandardOutput -match 'Protection is off|Protection disabled') {
-        # Write-Host "[$ScriptName - $FunctionName] [SUCCESS] SentinelOne agent protection has been successfully disabled."
+        Write-Host "[$ScriptName - $FunctionName] [SUCCESS] SentinelOne agent protection has been successfully disabled."
         return $true
     } else {
-        throw "Unprotect command completed, but success could not be verified from the output. Output: $($result.StandardOutput)"
+        throw "[$ScriptName - $FunctionName] Unprotect command completed, but success could not be verified from the output. Output: $($result.StandardOutput)"
     }
 }
 
@@ -510,196 +702,144 @@ function Set-C9SentinelOneProtect {
     Invoke-C9EndpointCommand -FilePath $s1Info.SentinelCtlPath -ArgumentList "protect"
 }
 
-function Get-C9S1ServiceState {
+function Invoke-C9S1StandardUninstall {
     <#
     .SYNOPSIS
-        (Specialist) Gets the existence and running state of the four core S1 services.
+        (Action) Performs the standard, vendor-recommended uninstall using the modern installer's clean command.
     .DESCRIPTION
-        This function reports which of the four core S1 services exist and, if they
-        do exist, what their current running state is. It returns an array of objects
-        with clear 'Existence' and 'RunningState' properties for unambiguous analysis.
+        This is now our primary removal method. It follows the proven "SCCM Hybrid" model by copying
+        the main installer to a temporary directory on the endpoint before executing it with the '-c' (clean)
+        argument. It uses the robust Invoke-C9InstallWithChildProcesses helper to manage the process.
+    .PARAMETER CloudCredentials
+        The CloudCredentials object containing the SiteToken.
+    .PARAMETER InstallerFile
+        The full path to the main SentinelOneInstaller*.exe file provided by the ImmyBot platform.
     .OUTPUTS
-        An array of PSCustomObjects, with 'Service', 'Existence', and 'RunningState' properties.
+        A PSCustomObject with a boolean 'Success' property and a 'Reason' string.
     #>
-    [CmdletBinding()]
-    param()
-
-    $VerbosePreference = 'Continue'
-    $DebugPreference = 'Continue'  
-
-    $FunctionName = "Get-C9S1ServiceState"
-
-    $ScriptName = "C9SentinelOneMeta"
-    Write-Host -Fore Blue "[$ScriptName - $FunctionName] What do you say we use an Invoke-ImmyCommand block and go look for some S1 Services..."
-    Write-Host -Fore Blue "[$ScriptName - $FunctionName] Sweet. I'm glad you agree. Let's go..."
-    $serviceReportList = Invoke-ImmyCommand -ScriptBlock {
-        $serviceNames = @(
-            "SentinelAgent"
-            "SentinelHelperService"
-            "SentinelStaticEngine"
-            "LogProcessorService"
-        )
-        $reportArray = @()
-        foreach ($name in $serviceNames) {
-            $service = Get-Service -Name $name -ErrorAction SilentlyContinue
-            $existence = if ($null -ne $service) {
-                "Exists"
-            } else {
-                "Not Found"
-            }
-            $runningState = if ($null -ne $service) {
-                $service.Status.ToString()
-            } else {
-                "N/A"
-            }
-            $serviceObject = New-Object -TypeName PSObject
-            Add-Member -InputObject $serviceObject -MemberType NoteProperty -Name 'Service' -Value $name
-            Add-Member -InputObject $serviceObject -MemberType NoteProperty -Name 'Existence' -Value $existence
-            Add-Member -InputObject $serviceObject -MemberType NoteProperty -Name 'RunningState' -Value $runningState
-            $reportArray += $serviceObject
-        }
-        return $reportArray
-    }
-    Write-Host -Fore Green "[$ScriptName - $FunctionName] I've got the service report list right here. Sending it back to you now..."
-    return $serviceReportList
-}
-
-function Get-C9S1InstallDirectoryState {
-    <#
-    .SYNOPSIS
-        (Specialist) Performs an exhaustive file system state check for all S1 installations.
-    .DESCRIPTION
-        This function identifies the parent Sentinel* folder and all of its children. It distinguishes
-        between the "active" installation folder and any other (potentially orphaned) folders. It provides
-        a file count for both the active folder and a sum of all other folders, which is a key
-        diagnostic indicator for parallel/broken installations.
-    .PARAMETER InstallPath
-        The installation path of the currently active agent.
-    .OUTPUTS
-        An array of PSCustomObjects, formatted to produce a clean, vertical diagnostic report.
-    #>
-
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory=$true)]
-        [string]$InstallPath
+        [Parameter(Mandatory = $true)]
+        [PSObject]$CloudCredentials,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$InstallerFile
     )
+    $FunctionName = "Invoke-C9S1StandardUninstall"
+    Write-Host "[$ScriptName - $FunctionName] Starting standard uninstall using SentinelOneInstaller.exe -c..."
 
-    $VerbosePreference = 'Continue'
-    $DebugPreference = 'Continue'
-
-    $FunctionName = "Get-C9S1InstallDirectoryState"
-
-    Write-Host "[$ScriptName - $FunctionName] I'm going to use an Invoke-ImmyCommand block and go look at the file system..."
-    $dirStateReport = Invoke-ImmyCommand -ScriptBlock {
-        $activeInstallPath = $using:InstallPath; $reportArray = @()
-        Write-Host "[$ScriptName - $FunctionName] Gonna use a try block to see if I can figure out what's going on with: $activeInstallPath...I'll let you know what I found when I'm all finished otherwise this is gonna get noisy..."
-        try {
-            $parentDir = Split-Path -Path $activeInstallPath -Parent
-            $activeChildName = Split-Path -Path $activeInstallPath -Leaf
-            $allChildDirs = Get-ChildItem -Path $parentDir -Directory -ErrorAction SilentlyContinue
-            $otherChildDirs = $allChildDirs | Where-Object {
-                $_.Name -ne $activeChildName
-            }
-            $activeFolderFileCount = (Get-ChildItem -Path $activeInstallPath -File -Recurse -ErrorAction SilentlyContinue).Count
-            $otherFoldersFileCount = 0
-            if ($otherChildDirs) {
-                foreach ($otherDir in $otherChildDirs) {
-                    $otherFoldersFileCount += (Get-ChildItem -Path $otherDir.FullName -File -Recurse -ErrorAction SilentlyContinue).Count
-                }
-            }
-            $row1 = New-Object -TypeName PSObject
-            Add-Member -InputObject $row1 'Property' 'Installation Folder (Parent)'
-            Add-Member -InputObject $row1 'Value' $parentDir
-            $reportArray += $row1
-            $row2 = New-Object -TypeName PSObject
-            Add-Member -InputObject $row2 'Property' 'Install Folder (Child)'
-            Add-Member -InputObject $row2 'Value' $activeChildName
-            $reportArray += $row2
-            $row3 = New-Object -TypeName PSObject
-            Add-Member -InputObject $row3 'Property' 'Number of additional child folders'
-            Add-Member -InputObject $row3 'Value' "$($otherChildDirs.Count)"
-            $reportArray += $row3
-            $row4 = New-Object -TypeName PSObject
-            Add-Member -InputObject $row4 'Property' 'Install Folder Total Files'
-            Add-Member -InputObject $row4 'Value' "$activeFolderFileCount"
-            $reportArray += $row4
-            $row5 = New-Object -TypeName PSObject
-            Add-Member -InputObject $row5 'Property' 'Other Child Folder Total Files'
-            Add-Member -InputObject $row5 'Value' "$($otherFoldersFileCount)"
-            $reportArray += $row5
-        } catch {
-            $errorRow = New-Object -TypeName PSObject
-            Add-Member -InputObject $errorRow 'Property' 'FileSystem Analysis'
-            Add-Member -InputObject $errorRow 'Value' "Error: $($_.Exception.Message)"
-            $reportArray += $errorRow
-        }
-        return $reportArray
+    # Create a temporary directory on the endpoint.
+    $tempDirOnEndpoint = Invoke-ImmyCommand -ScriptBlock {
+        $tempPath = Join-Path -Path $env:TEMP -ChildPath "S1_StandardUninstall_$(Get-Date -Format 'yyyyMMddHHmmss')"
+        New-Item -Path $tempPath -ItemType Directory -Force | Out-Null
+        return $tempPath
     }
-    Write-Host "[$ScriptName - $FunctionName] To be honest, I'm not smart enough to understand everything I found, but here's the (possibly blank) report..."
-    return $dirStateReport
+
+    try {
+        # --- Step 1: Copy Installer to Temp Dir (SCCM Hybrid Pattern) ---
+        $copiedInstallerPath = Join-Path -Path $tempDirOnEndpoint -ChildPath (Split-Path $InstallerFile -Leaf)
+        Write-Host "[$ScriptName - $FunctionName] Copying installer to '$copiedInstallerPath' on endpoint..."
+        Invoke-ImmyCommand -ScriptBlock { Copy-Item -Path $using:InstallerFile -Destination $using:copiedInstallerPath -Force }
+
+        # --- Step 2: Execute the Cleaner Command ---
+        $cleanerArgs = "-c -q" # Always run clean and quiet
+        if ($CloudCredentials.HasSiteToken) {
+            $cleanerArgs += " -t `"$($CloudCredentials.SiteToken)`""
+            Write-Host "[$ScriptName - $FunctionName] Executing cleaner with site token..."
+        } else {
+            Write-Warning "[$ScriptName - $FunctionName] No site token available. Running cleaner without it."
+        }
+        
+        $cleanerResult = Invoke-C9InstallWithChildProcesses -Path $copiedInstallerPath -Arguments $cleanerArgs -TimeoutInSeconds 900
+
+        if ($cleanerResult.ExitCode -ne 0 -and $cleanerResult.ExitCode -ne 1605) {
+            throw "The installer clean process failed with Exit Code: $($cleanerResult.ExitCode). Error: $($cleanerResult.StandardError)"
+        }
+
+        Write-Host "[$ScriptName - $FunctionName] [SUCCESS] Standard uninstall process completed (Exit Code: $($cleanerResult.ExitCode))."
+        return [PSCustomObject]@{ Success = $true; Reason = "Standard uninstall completed successfully." }
+
+    } catch {
+        $errorMessage = "Standard uninstall failed. Reason: $($_.Exception.Message)"
+        Write-Error "[$ScriptName - $FunctionName] [FAIL] $errorMessage"
+        return [PSCustomObject]@{ Success = $false; Reason = $errorMessage }
+    } finally {
+        if ($tempDirOnEndpoint) {
+            Write-Host "[$ScriptName - $FunctionName] Cleaning up temporary directory: $tempDirOnEndpoint"
+            Invoke-ImmyCommand { Remove-Item -Path $using:tempDirOnEndpoint -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
 }
 
-function Get-C9S1ComprehensiveStatus {
+function Invoke-C9S1ForcedRemoval {
     <#
     .SYNOPSIS
-        (S1-Specific Get Orchestrator) Gathers all local SentinelOne agent status data.
+        (Action) Performs a forced, aggressive removal using the legacy SentinelCleaner.exe utility.
     .DESCRIPTION
-        This is a master "Get" function for all things related to the local S1 agent. It orchestrates
-        calls to specialist functions to get service state, file system state, and sentinelctl status,
-        then assembles them into a single, comprehensive data object.
-        This function is designed to be "quiet" and return only data, not perform logging itself.
+        This is our "nuclear option" for the most stubborn agents. It uses the Get-C9Portable7za helper
+        to extract the legacy 'SentinelCleaner.exe' from the main installer package and then executes it.
+    .PARAMETER CloudCredentials
+        The CloudCredentials object, checked for a site token which may be used by the cleaner.
+    .PARAMETER InstallerFile
+        The full path to the main SentinelOneInstaller*.exe file, which contains the cleaner.
     .OUTPUTS
-        A PSCustomObject containing the complete local state of the SentinelOne agent.
+        A PSCustomObject with a boolean 'Success' property and a 'Reason' string.
     #>
     [CmdletBinding()]
-    param()
+    param(
+        [Parameter(Mandatory = $true)]
+        [PSObject]$CloudCredentials,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$InstallerFile
+    )
+    $FunctionName = "Invoke-C9S1ForcedRemoval"
+    Write-Host "[$ScriptName - $FunctionName] Starting forced removal process using legacy SentinelCleaner.exe..."
 
-    $VerbosePreference = 'Continue'
-    $DebugPreference = 'Continue'
+    $tempDirOnEndpoint = Invoke-ImmyCommand -ScriptBlock {
+        $tempPath = Join-Path -Path $env:TEMP -ChildPath "S1_ForcedRemoval_$(Get-Date -Format 'yyyyMMddHHmmss')"
+        New-Item -Path $tempPath -ItemType Directory -Force | Out-Null
+        return $tempPath
+    }
 
-    $FunctionName = "Get-C9S1ComprehensiveStatus"
+    try {
+        # --- Step 1: Get the 7-Zip utility (Proven Pattern) ---
+        $7zaPath = Get-C9Portable7za
+        if (-not $7zaPath) { throw "Could not acquire the 7za.exe utility." }
 
-    Write-Host -Fore Blue "[$ScriptName - $FunctionName] We're gonna do something I like to call...gettin' a ton of SentinelOne info..."
-    $s1Data = [ordered]@{
-        IsPresentAnywhere = $false
-        VersionFromService = $null
-        VersionFromCtl = $null
-        AgentId = $null
-        InstallPath = $null
-        ServicesReport = $null
-        InstallDirectoryReport = $null
-        SentinelCtlStatusReport = $null
+        # --- Step 2: Extract SentinelCleaner.exe ---
+        Write-Host "[$ScriptName - $FunctionName] Extracting SentinelCleaner.exe from '$InstallerFile'..."
+        $cleanerPathOnEndpoint = Join-Path -Path $tempDirOnEndpoint -ChildPath "SentinelCleaner.exe"
+        
+        Invoke-ImmyCommand -ScriptBlock {
+            & $using:7zaPath x $using:InstallerFile -o$using:tempDirOnEndpoint SentinelCleaner.exe | Out-Null
+        }
+
+        if (-not (Invoke-ImmyCommand { Test-Path $using:cleanerPathOnEndpoint })) {
+            throw "Failed to extract SentinelCleaner.exe from the installer package."
+        }
+        Write-Host "[$ScriptName - $FunctionName] [SUCCESS] Extracted cleaner to '$cleanerPathOnEndpoint'."
+
+        # --- Step 3: Execute the Legacy Cleaner ---
+        $cleanerResult = Invoke-C9InstallWithChildProcesses -Path $cleanerPathOnEndpoint -TimeoutInSeconds 900
+
+        if ($cleanerResult.ExitCode -ne 0) {
+            throw "The SentinelCleaner.exe process failed with Exit Code: $($cleanerResult.ExitCode). Error: $($cleanerResult.StandardError)"
+        }
+
+        Write-Host "[$ScriptName - $FunctionName] [SUCCESS] Forced removal process completed."
+        return [PSCustomObject]@{ Success = $true; Reason = "Forced removal with legacy cleaner completed successfully." }
+
+    } catch {
+        $errorMessage = "Forced removal failed. Reason: $($_.Exception.Message)"
+        Write-Error "[$ScriptName - $FunctionName] [FAIL] $errorMessage"
+        return [PSCustomObject]@{ Success = $false; Reason = $errorMessage }
+    } finally {
+        if ($tempDirOnEndpoint) {
+            Write-Host "[$ScriptName - $FunctionName] Cleaning up temporary directory: $tempDirOnEndpoint"
+            Invoke-ImmyCommand { Remove-Item -Path $using:tempDirOnEndpoint -Recurse -Force -ErrorAction SilentlyContinue }
+        }
     }
-    $baseInfo = Get-C9SentinelOneInfo
-    if (-not $baseInfo) {
-        Write-Warning "[$ScriptName - $FunctionName] No S1 agent found. Returning empty report."
-        return New-Object -TypeName PSObject -Property $s1Data
-    }
-    Write-Host -Fore Blue "[$ScriptName - $FunctionName] Found the SentinelOne agent. Let's gather all the details now..."
-    $s1Data.IsPresentAnywhere  = $true
-    $s1Data.VersionFromService = $baseInfo.Version
-    $s1Data.InstallPath = $baseInfo.InstallPath
-    Write-Host -Fore Blue "[$ScriptName - $FunctionName] Now I'm gonna call some helper functions take us to some other places to get more stuff..."
-    $s1Data.ServicesReport = Get-C9S1ServiceState
-    $s1Data.InstallDirectoryReport = Get-C9S1InstallDirectoryState -InstallPath $baseInfo.InstallPath
-    $ctlStatusReport = Get-C9SentinelCtl -Command "status"
-    $s1Data.SentinelCtlStatusReport = $ctlStatusReport
-    $ctlVersionLine = $ctlStatusReport | Where-Object {
-        $_.Property -eq 'Monitor Build id'
-    } | Select-Object -First 1
-    if ($ctlVersionLine) {
-        $s1Data.VersionFromCtl = ($ctlVersionLine.Value -split '\+')[0].Trim()
-    }
-    $ctlAgentIdReport = Get-C9SentinelCtl -Command "agent_id"
-    $agentIdLine = $ctlAgentIdReport | Where-Object {
-        $_.Property -eq 'Agent ID'
-    } | Select-Object -First 1
-    if ($agentIdLine) {
-        $s1Data.AgentId = $agentIdLine.Value
-    }
-    Write-Host -Fore Green "[$ScriptName - $FunctionName] We're done. I think we did good. Here's the final report object..."
-    return New-Object -TypeName PSObject -Property $s1Data
 }
 
 Export-ModuleMember -Function *

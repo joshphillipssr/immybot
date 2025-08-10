@@ -18,9 +18,9 @@ function Show-C9SystemStateReport {
     $rows = Format-C9ObjectForDisplay -InputObject (New-Object PSObject -Property $systemState) -DefaultCategory "System State"
 
     # Print in a clean, styled report
-    Write-Host "`n================== SYSTEM STATE DIAGNOSTIC ==================" -ForegroundColor Cyan
+    Write-Host "`n================== SYSTEM STATE DIAGNOSTIC ==================" 
     $rows | Format-Table -AutoSize
-    Write-Host "==============================================================" -ForegroundColor Cyan
+    Write-Host "==============================================================" 
 }
 
 function Write-C9Log {
@@ -56,25 +56,25 @@ function Get-C9ComprehensiveSystemState {
     $FunctionName = "Get-C9ComprehensiveSystemState"
 
     # Announce the start of the entire data gathering process.
-    Write-Host -ForegroundColor Yellow "[$ScriptName - $FunctionName] Here we go. Time to gather and report on the complete state of the endpoint..."
-    Write-Host -ForegroundColor Yellow "[$ScriptName - $FunctionName] BEGINNING COMPREHENSIVE SYSTEM STATE REPORT"
+    Write-Host  "[$ScriptName - $FunctionName] Here we go. Time to gather and report on the complete state of the endpoint..."
+    Write-Host  "[$ScriptName - $FunctionName] BEGINNING COMPREHENSIVE SYSTEM STATE REPORT"
 
     # Initialize the final, all-encompassing state object.
     $systemState = New-Object -TypeName PSObject
 
     # --- Step 1: Get S1 Agent Status ---
     # Announce, then call the quiet function.
-    Write-Host -ForegroundColor Yellow "[$ScriptName - $FunctionName]`n--- Gathering S1 Agent Status... ---" 
+    Write-Host  "[$ScriptName - $FunctionName]`n--- Gathering S1 Agent Status... ---" 
     $s1Status = Get-C9S1ComprehensiveStatus
     Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'S1Status' -Value $s1Status
 
     # --- Step 2: Get Pending Reboot Status ---
-    Write-Host -ForegroundColor Yellow "[$ScriptName - $FunctionName]`n--- Gathering Pending Reboot Requirements... ---"
+    Write-Host  "[$ScriptName - $FunctionName]`n--- Gathering Pending Reboot Requirements... ---"
     $rebootReqs = Get-C9SystemRebootRequirements
     Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootRequirements' -Value $rebootReqs
     
     # --- Step 3: Get User Activity Status ---
-    Write-Host -ForegroundColor Yellow "[$ScriptName - $FunctionName]`n--- Gathering User Activity Status... ---"
+    Write-Host  "[$ScriptName - $FunctionName]`n--- Gathering User Activity Status... ---"
     $userActivity = Get-C9UserActivityStatus
     Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'UserActivity' -Value $userActivity
 
@@ -82,7 +82,7 @@ function Get-C9ComprehensiveSystemState {
     $rebootPolicy = Get-C9RebootPolicyContext
     Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootPolicy' -Value $rebootPolicy
     
-    Write-Host -ForegroundColor Yellow "[$ScriptName - $FunctionName] Done. You're welcome."
+    Write-Host  "[$ScriptName - $FunctionName] Done. You're welcome."
     Write-Host "[$ScriptName - $FunctionName] COMPREHENSIVE SYSTEM STATE REPORT COMPLETE"
     
     # Return the final, all-encompassing object.
@@ -255,7 +255,7 @@ function Get-C9RebootPolicyContext {
 
     $FunctionName = "Get-C9RebootPolicyContext"
 
-    Write-Host -ForegroundColor Cyan "[$ScriptName - $FunctionName] Gathering platform reboot policy context..."
+    Write-Host  "[$ScriptName - $FunctionName] Gathering platform reboot policy context..."
 
     # Initialize result object with all possible properties
     $result = [ordered]@{
@@ -279,7 +279,7 @@ function Get-C9RebootPolicyContext {
             $result.PolicySource = "Platform Variables"
             Write-Host "[$ScriptName - $FunctionName] Found RebootPreference: '$($rebootPrefVar.Value)'"
         } else {
-            Write-Host -ForegroundColor Yellow "[$ScriptName - $FunctionName] RebootPreference variable not found in current context"
+            Write-Host  "[$ScriptName - $FunctionName] RebootPreference variable not found in current context"
         }
 
         # Check for PromptTimeoutAction variable
@@ -289,7 +289,7 @@ function Get-C9RebootPolicyContext {
             $result.IsPromptTimeoutActionAvailable = $true
             Write-Host "[$ScriptName - $FunctionName] Found PromptTimeoutAction: '$($promptTimeoutActionVar.Value)'"
         } else {
-            Write-Host -ForegroundColor Yellow "[$ScriptName - $FunctionName] PromptTimeoutAction variable not found in current context"
+            Write-Host  "[$ScriptName - $FunctionName] PromptTimeoutAction variable not found in current context"
         }
 
         # Check for AutoConsentToReboots variable
@@ -299,7 +299,7 @@ function Get-C9RebootPolicyContext {
             $result.IsAutoConsentToRebootsAvailable = $true
             Write-Host "[$ScriptName - $FunctionName] Found AutoConsentToReboots: '$($autoConsentVar.Value)'"
         } else {
-            Write-Host -ForegroundColor Yellow "[$ScriptName - $FunctionName] AutoConsentToReboots variable not found in current context"
+            Write-Host  "[$ScriptName - $FunctionName] AutoConsentToReboots variable not found in current context"
         }
 
         # Check for PromptTimeout variable
@@ -309,7 +309,7 @@ function Get-C9RebootPolicyContext {
             $result.IsPromptTimeoutAvailable = $true
             Write-Host "[$ScriptName - $FunctionName] Found PromptTimeout: '$($promptTimeoutVar.Value)'"
         } else {
-            Write-Host -ForegroundColor Yellow "[$ScriptName - $FunctionName] PromptTimeout variable not found in current context"
+            Write-Host  "[$ScriptName - $FunctionName] PromptTimeout variable not found in current context"
         }
 
         # Update PolicySource if any variables were found
@@ -321,9 +321,9 @@ function Get-C9RebootPolicyContext {
         ) | Where-Object { $_ -eq $true } | Measure-Object | Select-Object -ExpandProperty Count
 
         if ($availableCount -gt 0) {
-            Write-Host -ForegroundColor Green "[$ScriptName - $FunctionName] Found $availableCount platform reboot policy variable(s)"
+            Write-Host  "[$ScriptName - $FunctionName] Found $availableCount platform reboot policy variable(s)"
         } else {
-            Write-Host -ForegroundColor Green "[$ScriptName - $FunctionName] No platform reboot policy variables found in current context"
+            Write-Host  "[$ScriptName - $FunctionName] No platform reboot policy variables found in current context"
         }
 
     } catch {
@@ -335,10 +335,10 @@ function Get-C9RebootPolicyContext {
 
     # Format the collected rows into a table string and display it.
     $tableOutput = $displayRows | Format-Table -AutoSize | Out-String
-    Write-Host -ForegroundColor Green "----------------- REBOOT POLICY CONTEXT -----------------"
-    Write-Host -ForegroundColor Cyan $tableOutput
-    Write-Host -ForegroundColor Green "---------------------------------------------------------"
-    Write-Host -ForegroundColor Green "[$ScriptName - $FunctionName] Platform reboot policy context gathering complete."
+    Write-Host  "----------------- REBOOT POLICY CONTEXT -----------------"
+    Write-Host  $tableOutput
+    Write-Host  "---------------------------------------------------------"
+    Write-Host  "[$ScriptName - $FunctionName] Platform reboot policy context gathering complete."
     
     return New-Object -TypeName PSObject -Property $result
 }
@@ -425,7 +425,7 @@ function Get-C9UserActivityStatus {
         try {
             $computerLockStatus = Get-C9ComputerLockedStatus -Computer $Computer -ErrorAction Stop
             $result.LockStatus = $computerLockStatus.LockStatus
-            Write-Host -ForegroundColor Green "[$ScriptName - $FunctionName] Current lock status: $($result.LockStatus)"
+            Write-Host  "[$ScriptName - $FunctionName] Current lock status: $($result.LockStatus)"
         } catch {
             Write-Warning "[$ScriptName - $FunctionName] Could not determine lock status: $_"
             $result.LockStatus = "Error"
@@ -1836,11 +1836,11 @@ function Invoke-C9InstallWithChildProcesses {
 
     # Log the full results received back in the Metascript log for visibility.
     if ($result) {
-        Write-Host -ForegroundColor Green "[$ScriptName - $FunctionName] Endpoint execution complete. Exit Code: $($result.ExitCode)."
+        Write-Host  "[$ScriptName - $FunctionName] Endpoint execution complete. Exit Code: $($result.ExitCode)."
         if (-not [string]::IsNullOrWhiteSpace($result.StandardOutput)) {
-            Write-Host -ForegroundColor Cyan "[$ScriptName - $FunctionName] --- Endpoint Standard Output ---"
-            Write-Host -ForegroundColor Green $result.StandardOutput
-            Write-Host -ForegroundColor Cyan "---------------------------------"
+            Write-Host  "[$ScriptName - $FunctionName] --- Endpoint Standard Output ---"
+            Write-Host  $result.StandardOutput
+            Write-Host  "---------------------------------"
         }
         if (-not [string]::IsNullOrWhiteSpace($result.StandardError)) {
             Write-Warning "--- Endpoint Standard Error ---"
@@ -1943,10 +1943,10 @@ function Invoke-C9EndpointCommand {
 
     $FunctionName = "Invoke-C9EndpointCommand"
 
-    Write-Host -ForegroundColor DarkYellow "[$ScriptName - $FunctionName] Preparing to execute '$FilePath' with arguments: $($ArgumentList -join ' ')"
+    Write-Host  "[$ScriptName - $FunctionName] Preparing to execute '$FilePath' with arguments: $($ArgumentList -join ' ')"
     $result = Invoke-ImmyCommand -Computer $Computer -Timeout $TimeoutSeconds -ScriptBlock {
-        Write-Host -ForegroundColor DarkYellow "[$using:ScriptName - $using:FunctionName] Endpoint received command: '$($using:FilePath)'"
-        Write-Host -ForegroundColor DarkYellow "[$using:ScriptName - $using:FunctionName] Endpoint received argument: '$($using:ArgumentList -join ' ')'"
+        Write-Host  "[$using:ScriptName - $using:FunctionName] Endpoint received command: '$($using:FilePath)'"
+        Write-Host  "[$using:ScriptName - $using:FunctionName] Endpoint received argument: '$($using:ArgumentList -join ' ')'"
         if (-not (Test-Path -Path $using:FilePath -PathType Leaf)) {
             throw "Executable not found at path: $($using:FilePath)"
         }
@@ -1956,7 +1956,7 @@ function Invoke-C9EndpointCommand {
             } else { $arg }
         }
         $argumentString = $formattedArgs -join ' '
-        Write-Host -ForegroundColor DarkYellow "[$using:ScriptName - $using:FunctionName] Executing: `"$($using:FilePath)`" $argumentString"
+        Write-Host  "[$using:ScriptName - $using:FunctionName] Executing: `"$($using:FilePath)`" $argumentString"
         $pinfo = New-Object System.Diagnostics.ProcessStartInfo
         $pinfo.FileName = $using:FilePath
         $pinfo.Arguments = $argumentString
@@ -1985,11 +1985,11 @@ function Invoke-C9EndpointCommand {
         }
     }
     if ($result) {
-        Write-Host -ForegroundColor DarkYellow "[$ScriptName - $FunctionName] Command finished with Exit Code: $($result.ExitCode)."
+        Write-Host  "[$ScriptName - $FunctionName] Command finished with Exit Code: $($result.ExitCode)."
         if (-not [string]::IsNullOrWhiteSpace($result.StandardOutput)) {
-            Write-Host -ForegroundColor DarkYellow "[$ScriptName - $FunctionName] --- Start Standard Output ---"
-            Write-Host -ForegroundColor Green $result.StandardOutput
-            Write-Host -ForegroundColor DarkYellow "[$ScriptName - $FunctionName] --- End Standard Output ---"
+            Write-Host  "[$ScriptName - $FunctionName] --- Start Standard Output ---"
+            Write-Host  $result.StandardOutput
+            Write-Host  "[$ScriptName - $FunctionName] --- End Standard Output ---"
         }
         if (-not [string]::IsNullOrWhiteSpace($result.StandardError)) {
             Write-Warning "[$ScriptName - $FunctionName] --- Start Standard Error ---"
@@ -2026,19 +2026,19 @@ function Get-C9ComprehensiveSystemState {
     $systemState = New-Object -TypeName PSObject
     
     # --- Step 1: Get S1 Agent Status ---
-    Write-Host "[$ScriptName - $FunctionName]`n--- Gathering SentinelOne Agent Status... ---" -ForegroundColor Cyan
+    Write-Host "[$ScriptName - $FunctionName]`n--- Gathering SentinelOne Agent Status... ---" 
     Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'S1Status' -Value (Get-C9S1ComprehensiveStatus)
 
     # --- Step 2: Get Pending Reboot Status ---
-    Write-Host "[$ScriptName - $FunctionName]`n--- Gathering Pending Reboot Requirements... ---" -ForegroundColor Cyan
+    Write-Host "[$ScriptName - $FunctionName]`n--- Gathering Pending Reboot Requirements... ---" 
     Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootRequirements' -Value (Get-C9SystemRebootRequirements)
     
     # --- Step 3: Get User Activity Status ---
-    Write-Host "[$ScriptName - $FunctionName]`n--- Gathering User Activity Status... ---" -ForegroundColor Cyan
+    Write-Host "[$ScriptName - $FunctionName]`n--- Gathering User Activity Status... ---" 
     Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'UserActivity' -Value (Get-C9UserActivityStatus)
 
     # --- Step 4: Get Platform Reboot Policy ---
-    Write-Host "[$ScriptName - $FunctionName]`n--- Gathering Platform Reboot Policy Context... ---" -ForegroundColor Cyan
+    Write-Host "[$ScriptName - $FunctionName]`n--- Gathering Platform Reboot Policy Context... ---" 
     Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootPolicy' -Value (Get-C9RebootPolicyContext)
     
     Write-Host -Fore Yellow "[$ScriptName - $FunctionName] COMPREHENSIVE SYSTEM STATE ASSESSMENT COMPLETE."

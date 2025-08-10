@@ -5,58 +5,60 @@
 # Docs:     https://immydocs.c9cg.com
 # =================================================================================
 
-# This is the last remaining script that lives in the system context. This script should be converted to the metascript context
-# for continuity.
+$VerbosePreference = 'Continue'
+$DebugPreference = 'Continue'
 
-# $VerbosePreference = 'Continue'
-$flagFile = "C:\ProgramData\ImmyBot\S1\s1_is_installed.txt"
-
-Write-Host "[$using:ScriptName] Detection & Flagging Script Started..."
+# This is the hardcoded version to return for broken/unversioned installations.
+# It must match a version available in the software package to route to the Test script correctly.
+$fallbackVersion = "24.2.3.471"
 
 try {
+    # Import the necessary helper modules. 
+    Write-Host "[$ScriptName] Importing helper modules..."
+    Import-Module "C9MetascriptHelpers" -ErrorAction Stop -Verbose:$false
+    Import-Module "C9SentinelOneMeta"   -ErrorAction Stop -Verbose:$false
 
-    Write-Host "[$using:ScriptName] [Step 1] Checking for SentinelOne installation directory..."
-    $s1ProgramFilesPath = Resolve-Path -Path "C:\Program Files\Sentinel*" -ErrorAction SilentlyContinue
+    # --- Step 1: Gather Comprehensive Status ---
+    Write-Host "[$ScriptName] Gathering comprehensive SentinelOne status from the endpoint..."
+    $s1Status = Get-C9S1ComprehensiveStatus
 
-    if (-not $s1ProgramFilesPath) {
-        Write-Host "[$using:ScriptName] [Step 1] No Sentinel* installation directory found."
-        Remove-Item -Path $flagFile -Force -ErrorAction SilentlyContinue
-        return $null
+    # --- Step 2: The Main Decision ---
+    # Check the single source of truth for agent presence.
+    if (-not $s1Status.IsPresentAnywhere) {
+        Write-Host -ForegroundColor Green "[$ScriptName] [CLEAN] No SentinelOne remnants found. Returning `$False to proceed with installation."
+        return $False
     }
 
-    Write-Host "[$using:ScriptName] [Step 1] Found installation directory."
-    # Don't really need this anymore
-    Write-Host "[$using:ScriptName] [Step 2] Creating a presence flag file."
-    New-Item -Path (Split-Path $flagFile -Parent) -ItemType Directory -Force | Out-Null
-    New-Item -Path $flagFile -ItemType File -Force | Out-Null
+    # --- Step 3: Remnants Found - Find a Version ---
+    # If we are here, IsPresentAnywhere was $true. We must return a version number.
+    Write-Host "[$ScriptName] [DETECTED] SentinelOne remnants were found. Attempting to identify a version..."
 
-    Write-Host "[$using:ScriptName] [Step 3] Querying for a specific version..."
-    $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='SentinelAgent'" -ErrorAction SilentlyContinue
-
-    if ($service -and $service.PathName) {
-        $exePath = $service.PathName.Trim('"')
-        if (Test-Path -LiteralPath $exePath) {
-            $fileInfo = Get-Item -LiteralPath $exePath -ErrorAction SilentlyContinue
-            $version = $fileInfo.VersionInfo.ProductVersion
-            
-            if ($version) {
-                Write-Host "[$using:ScriptName] [Step 3] Found SentinelOne version: '$version'."
-                return $version
-            }
-        }
+    # Prioritize the most reliable version source first (from the service EXE).
+    if (-not [string]::IsNullOrWhiteSpace($s1Status.VersionFromService)) {
+        $versionToReturn = $s1Status.VersionFromService
+        Write-Host -ForegroundColor Green "[$ScriptName] [SUCCESS] Found version '$versionToReturn' from the SentinelAgent service."
+        return $versionToReturn
     }
-
-    # In order to resolve the broken install scenarios, we need to go to the Test phase.
-    # The only way to do that is to pass the detection phase. So we will report a version
-    # if there is any trace of SentinelOne installed.
-    $hardcodedVersion = "24.2.3.471"
     
-    Write-Host "[$using:ScriptName] [Step 3] Directory exists, but could not determine a specific version."
-    Write-Host "[$using:ScriptName] This indicates a broken agent. Returning hardcoded version '$hardcodedVersion' to trigger the Test phase."
-    return $hardcodedVersion 
-}
-catch {
-    Write-Host "[$using:ScriptName] S1 Detection Script FAILED due to an unexpected error: $($_.Exception.Message)"
-    Remove-Item -Path $flagFile -Force -ErrorAction SilentlyContinue
-    return $null
+    # Fall back to the version from sentinelctl if the service version wasn't available.
+    if (-not [string]::IsNullOrWhiteSpace($s1Status.VersionFromCtl)) {
+        $versionToReturn = $s1Status.VersionFromCtl
+        Write-Host -ForegroundColor Green "[$ScriptName] [SUCCESS] Found version '$versionToReturn' from sentinelctl.exe."
+        return $versionToReturn
+    }
+
+    # --- Step 4: Fallback for Unversioned Remnants ---
+    # If we're here, remnants exist, but we couldn't parse a specific version.
+    # This indicates a broken or partial installation that requires remediation.
+    Write-Warning "[$ScriptName] [BROKEN] SentinelOne remnants are present, but a version could not be determined."
+    Write-Warning "[$ScriptName] Returning fallback version '$fallbackVersion' to route the machine to the Test script for remediation."
+    return $fallbackVersion
+
+} catch {
+    # --- Catastrophic Failure Fallback ---
+    # If the detection script itself fails, it is safest to route to the Test script for manual log inspection.
+    # This prevents an unintended installation attempt on a machine with an unknown state.
+    Write-Error "[$ScriptName] A catastrophic error occurred during the detection process. Error details: $_"
+    Write-Error "[$ScriptName] Returning fallback version '$fallbackVersion' as a fail-safe to route to the Test script for inspection."
+    return $fallbackVersion
 }

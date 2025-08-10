@@ -7,23 +7,22 @@
 
 param([string]$rebootPreference)
 
-WriteHome 
+$VerbosePreference = 'Continue'
+$DebugPreference = 'Continue'
 
 $forceNullFlagFile = "C:\ProgramData\ImmyBot\S1\s1_is_null.txt"
 if (Test-FilePath -Path $forceNullFlagFile) {
-    Write-Host "[$ScriptName] OVERRIDE DETECTED: Forcing test to return `$false."
+    Write-Host -ForegroundColor DarkYellow "[$ScriptName] OVERRIDE DETECTED: Forcing test to return `$false."
     return $false
 }
 
-# --- THIS IS THE FIX ---
-# Import ALL modules needed for the entire script's operation.
 Import-Module "C9MetascriptHelpers"
 Import-Module "C9SentinelOneMeta"
 
 # =========================================================================
 # --- Phase 0: The Ultimate Get ---
 # =========================================================================
-# This phase now correctly uses functions from BOTH modules.
+
 if ($null -eq $script:systemState) {
     $script:systemState = Get-C9ComprehensiveSystemState
 } else {
@@ -32,30 +31,29 @@ if ($null -eq $script:systemState) {
 
 Start-Sleep -Seconds 5
 # --- For diagnostics, let's log the key reports we gathered ---
-Write-Host "`n--- Top-Level S1 Summary ---" -ForegroundColor Cyan
+Write-Host -ForegroundColor DarkYellow "`n--- Top-Level S1 Summary ---" 
 $summaryObject = [ordered]@{ "Agent Is Present" = $script:systemState.S1Status.IsPresentAnywhere; "Version (Service)" = $script:systemState.S1Status.VersionFromService; "Version (sentinelctl)"= $script:systemState.S1Status.VersionFromCtl; "Agent ID" = $script:systemState.S1Status.AgentId }; New-Object -TypeName PSObject -Property $summaryObject | Format-List
 Start-Sleep -Seconds 5
-Write-Host "`n--- S1 Install Directory Report ---"
+Write-Host -ForegroundColor DarkYellow "`n--- S1 Install Directory Report ---"
 $script:systemState.S1Status.InstallDirectoryReport | Format-Table -AutoSize
 Start-Sleep -Seconds 5
-Write-Host "`n--- S1 Services Report ---" -ForegroundColor Cyan
+Write-Host -ForegroundColor DarkYellow "`n--- S1 Services Report ---"
 $script:systemState.S1Status.ServicesReport | Format-Table -AutoSize
 Start-Sleep -Seconds 5
-Write-Host "`n--- Reboot Requirements Report ---" -ForegroundColor Cyan
-# The RebootRequirements object from the helpers module is now "quiet" and flat, so Format-List is best.
+Write-Host -ForegroundColor DarkYellow "`n--- Reboot Requirements Report ---"
 $script:systemState.RebootRequirements | Format-List
 
 # =========================================================================
 # --- Phase 1: Pre-Flight Safety Checks ---
 # =========================================================================
-# This logic is unchanged and now consumes the data from our Get object.
+
 Write-Host "`n[$ScriptName] Phase 1: Performing pre-flight safety checks..."
 Test-C9MsiExecMutex
 $clearPendingDecision = Test-C9RebootDecision -Scenario ClearPending -SystemState $script:systemState -OverrideSuppression $true
 if ($clearPendingDecision.ShouldReboot) {
     Write-Host "[$ScriptName] [ACTION] Clearing pending reboot as recommended..."
     Restart-ComputerAndWait -TimeoutDuration (New-TimeSpan -Minutes 15)
-    throw "Halting execution after pre-flight reboot to ensure fresh state analysis on next run."
+    throw "[$ScriptName] Halting execution after pre-flight reboot to ensure fresh state analysis on next run."
 } elseif (-not $clearPendingDecision.ShouldProceed) {
     throw "[$ScriptName] HALT: Cannot clear pending reboot safely: $($clearPendingDecision.Reason)"
 }
@@ -72,7 +70,7 @@ $s1Status = $script:systemState.S1Status
 $reasonsForFailure = @()
 
 # Rule 1: Agent must be present.
-if (-not $s1Status.IsPresentAnywhere) { $reasonsForFailure += "Agent is not present on the system." }
+if (-not $s1Status.IsPresentAnywhere) { $reasonsForFailure += "SentinelOne is not detected anywhere on the system." }
 
 # Rule 2: All report objects must exist (prevents errors on very broken installs).
 if (-not ($s1Status.ServicesReport -and $s1Status.InstallDirectoryReport -and $s1Status.SentinelCtlStatusReport)) {
