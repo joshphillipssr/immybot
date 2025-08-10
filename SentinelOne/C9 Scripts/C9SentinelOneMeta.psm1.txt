@@ -707,11 +707,12 @@ function Invoke-C9S1StandardUninstall {
     .SYNOPSIS
         (Action) Performs the standard, vendor-recommended uninstall using the modern installer's clean command.
     .DESCRIPTION
-        This is now our primary removal method. It follows the proven "SCCM Hybrid" model by copying
-        the main installer to a temporary directory on the endpoint before executing it with the '-c' (clean)
-        argument. It uses the robust Invoke-C9InstallWithChildProcesses helper to manage the process.
+        This is our primary removal method. It follows the proven "SCCM Hybrid" model by copying
+        the main installer to a temporary directory before executing it. It intelligently builds the
+        argument list with '-c', '-k <passphrase>', and '-t <sitetoken>' based on available credentials,
+        exactly as per vendor documentation.
     .PARAMETER CloudCredentials
-        The CloudCredentials object containing the SiteToken.
+        The CloudCredentials object which may contain the Passphrase and/or SiteToken.
     .PARAMETER InstallerFile
         The full path to the main SentinelOneInstaller*.exe file provided by the ImmyBot platform.
     .OUTPUTS
@@ -741,22 +742,35 @@ function Invoke-C9S1StandardUninstall {
         Write-Host "[$ScriptName - $FunctionName] Copying installer to '$copiedInstallerPath' on endpoint..."
         Invoke-ImmyCommand -ScriptBlock { Copy-Item -Path $using:InstallerFile -Destination $using:copiedInstallerPath -Force }
 
-        # --- Step 2: Execute the Cleaner Command ---
-        $cleanerArgs = "-c -q" # Always run clean and quiet
-        if ($CloudCredentials.HasSiteToken) {
-            $cleanerArgs += " -t `"$($CloudCredentials.SiteToken)`""
-            Write-Host "[$ScriptName - $FunctionName] Executing cleaner with site token..."
-        } else {
-            Write-Warning "[$ScriptName - $FunctionName] No site token available. Running cleaner without it."
+        # --- Step 2: Intelligently Build the Argument List (Corrected Logic) ---
+        # Start with the mandatory arguments for a clean, quiet removal.
+        $argumentList = "-c", "-q"
+        
+        # Conditionally add the passphrase if it exists.
+        if ($CloudCredentials.HasPassphrase) {
+            Write-Host "[$ScriptName - $FunctionName] Passphrase found. Adding '-k' to arguments."
+            $argumentList += "-k", "`"$($CloudCredentials.Passphrase)`""
         }
         
-        $cleanerResult = Invoke-C9InstallWithChildProcesses -Path $copiedInstallerPath -Arguments $cleanerArgs -TimeoutInSeconds 900
+        # Conditionally add the site token if it exists.
+        if ($CloudCredentials.HasSiteToken) {
+            Write-Host "[$ScriptName - $FunctionName] Site token found. Adding '-t' to arguments."
+            $argumentList += "-t", "`"$($CloudCredentials.SiteToken)`""
+        }
+        
+        $argumentStringForLog = $argumentList -join ' ' # Create a string for logging, replacing real creds
+        $argumentStringForLog = $argumentStringForLog -replace '`"(.+?)`"', '"<REDACTED>"'
+        Write-Host "[$ScriptName - $FunctionName] Executing installer with arguments: $argumentStringForLog"
 
-        if ($cleanerResult.ExitCode -ne 0 -and $cleanerResult.ExitCode -ne 1605) {
-            throw "The installer clean process failed with Exit Code: $($cleanerResult.ExitCode). Error: $($cleanerResult.StandardError)"
+        # --- Step 3: Execute the command ---
+        # The arguments are now passed as a string array to our robust wrapper.
+        $uninstallResult = Invoke-C9InstallWithChildProcesses -Path $copiedInstallerPath -Arguments $argumentList -TimeoutInSeconds 900
+
+        if ($uninstallResult.ExitCode -ne 0 -and $uninstallResult.ExitCode -ne 1605) {
+            throw "The standard uninstall process failed with Exit Code: $($uninstallResult.ExitCode). Error: $($uninstallResult.StandardError)"
         }
 
-        Write-Host "[$ScriptName - $FunctionName] [SUCCESS] Standard uninstall process completed (Exit Code: $($cleanerResult.ExitCode))."
+        Write-Host "[$ScriptName - $FunctionName] [SUCCESS] Standard uninstall process completed (Exit Code: $($uninstallResult.ExitCode))."
         return [PSCustomObject]@{ Success = $true; Reason = "Standard uninstall completed successfully." }
 
     } catch {

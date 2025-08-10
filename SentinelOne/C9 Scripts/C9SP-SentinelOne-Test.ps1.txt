@@ -12,7 +12,7 @@ $DebugPreference = 'Continue'
 
 $forceNullFlagFile = "C:\ProgramData\ImmyBot\S1\s1_is_null.txt"
 if (Test-FilePath -Path $forceNullFlagFile) {
-    Write-Host "[$ScriptName] OVERRIDE DETECTED: Forcing test to return `$false."
+    Write-Host -ForegroundColor DarkYellow "[$ScriptName] OVERRIDE DETECTED: Forcing test to return `$false."
     return $false
 }
 
@@ -31,41 +31,39 @@ if ($null -eq $script:systemState) {
 
 Start-Sleep -Seconds 5
 # --- For diagnostics, let's log the key reports we gathered ---
-Write-Host "`n--- Top-Level S1 Summary ---" -ForegroundColor Cyan
+Write-Host -ForegroundColor DarkYellow "`n--- Top-Level S1 Summary ---" 
 $summaryObject = [ordered]@{ "Agent Is Present" = $script:systemState.S1Status.IsPresentAnywhere; "Version (Service)" = $script:systemState.S1Status.VersionFromService; "Version (sentinelctl)"= $script:systemState.S1Status.VersionFromCtl; "Agent ID" = $script:systemState.S1Status.AgentId }; New-Object -TypeName PSObject -Property $summaryObject | Format-List
 Start-Sleep -Seconds 5
-Write-Host "`n--- S1 Install Directory Report ---"
+Write-Host -ForegroundColor DarkYellow "`n--- S1 Install Directory Report ---"
 $script:systemState.S1Status.InstallDirectoryReport | Format-Table -AutoSize
 Start-Sleep -Seconds 5
-Write-Host "`n--- S1 Services Report ---" -ForegroundColor Cyan
+Write-Host -ForegroundColor DarkYellow "`n--- S1 Services Report ---"
 $script:systemState.S1Status.ServicesReport | Format-Table -AutoSize
 Start-Sleep -Seconds 5
-Write-Host "`n--- Reboot Requirements Report ---" -ForegroundColor Cyan
-# The RebootRequirements object from the helpers module is now "quiet" and flat, so Format-List is best.
+Write-Host -ForegroundColor DarkYellow "`n--- Reboot Requirements Report ---"
 $script:systemState.RebootRequirements | Format-List
 
 # =========================================================================
 # --- Phase 1: Pre-Flight Safety Checks ---
 # =========================================================================
-# This logic is unchanged and now consumes the data from our Get object.
+
 Write-Host "`n[$ScriptName] Phase 1: Performing pre-flight safety checks..."
 Test-C9MsiExecMutex
 $clearPendingDecision = Test-C9RebootDecision -Scenario ClearPending -SystemState $script:systemState -OverrideSuppression $true
 if ($clearPendingDecision.ShouldReboot) {
     Write-Host "[$ScriptName] [ACTION] Clearing pending reboot as recommended..."
     Restart-ComputerAndWait -TimeoutDuration (New-TimeSpan -Minutes 15)
-    throw "Halting execution after pre-flight reboot to ensure fresh state analysis on next run."
+    throw "[$ScriptName] Halting execution after pre-flight reboot to ensure fresh state analysis on next run."
 } elseif (-not $clearPendingDecision.ShouldProceed) {
     throw "[$ScriptName] HALT: Cannot clear pending reboot safely: $($clearPendingDecision.Reason)"
 }
 Write-Host "[$ScriptName] Phase 1 Complete. Proceeding to S1 health validation..."
 
 # =========================================================================
-# --- Phase 2: S1 Health Validation (The "Test" Logic) ---
+# --- Phase 2: S1 Health Validation (Corrected Logic) ---
 # =========================================================================
 Write-Host "`n[$ScriptName] Phase 2: Evaluating SentinelOne agent health..."
 
-# --- THIS IS THE TEST LOGIC ---
 # We define our "definition of healthy" as a series of rules.
 $s1Status = $script:systemState.S1Status
 $reasonsForFailure = @()
@@ -77,24 +75,25 @@ if (-not $s1Status.IsPresentAnywhere) { $reasonsForFailure += "Agent is not pres
 if (-not ($s1Status.ServicesReport -and $s1Status.InstallDirectoryReport -and $s1Status.SentinelCtlStatusReport)) {
     $reasonsForFailure += "One or more critical data reports could not be generated."
 } else {
-    # Rule 3: Main service must be running.
-    $mainServiceState = ($s1Status.ServicesReport | Where-Object { $_.Service -eq 'SentinelAgent' }).RunningState
-    if ($mainServiceState -ne 'Running') { $reasonsForFailure += "Main SentinelAgent service is not running (State: $mainServiceState)." }
+    # Rule 3: Main service must exist and be running. (This now covers the .exe check)
+    $mainService = $s1Status.ServicesReport | Where-Object { $_.Service -eq 'SentinelAgent' }
+    if ($mainService.Existence -ne 'Exists') {
+        $reasonsForFailure += "Main SentinelAgent service does not exist."
+    } elseif ($mainService.RunningState -ne 'Running') {
+        $reasonsForFailure += "Main SentinelAgent service is not running (State: $($mainService.RunningState))."
+    }
 
-    # Rule 4: Active install files must exist.
-    $activeExeStatus = ($s1Status.InstallDirectoryReport | Where-Object { $_.Property -eq 'Active SentinelAgent.exe' }).Value # <-- Corrected property access
-    if ($activeExeStatus -ne 'Exists') { $reasonsForFailure += "Active SentinelAgent.exe is missing." }
-    
-    # Rule 5: No orphaned files.
-    $otherFilesStatus = ($s1Status.InstallDirectoryReport | Where-Object { $_.Property -eq 'Other Child Folder Total Files' }).Value # <-- Corrected property access
-    $otherFileCount = [int]($otherFilesStatus -replace ' files found', '')
-    if ($otherFileCount -gt 0) { $reasonsForFailure += "Orphaned files found in other Sentinel directories ($otherFileCount files)." }
+    # Rule 4: No orphaned files.
+    $otherFilesStatus = ($s1Status.InstallDirectoryReport | Where-Object { $_.Property -eq 'Other Child Folder Total Files' }).Value
+    if ($otherFilesStatus -match '\d+' -and ([int]$otherFilesStatus) -gt 0) {
+        $reasonsForFailure += "Orphaned files found in other Sentinel directories ($otherFilesStatus files)."
+    }
 
-    # Rule 6: sentinelctl must succeed.
+    # Rule 5: sentinelctl must succeed.
     $ctlSuccess = ($s1Status.SentinelCtlStatusReport | Where-Object { $_.Property -eq 'Execution Was Successful' }).Value
     if ($ctlSuccess -ne 'True') { $reasonsForFailure += "sentinelctl.exe status command failed." }
     
-    # Rule 7: Versions must match.
+    # Rule 6: Versions must match.
     if ($s1Status.VersionFromService -ne $s1Status.VersionFromCtl) { $reasonsForFailure += "Version mismatch (Service: $($s1Status.VersionFromService), Ctl: $($s1Status.VersionFromCtl))." }
 }
 

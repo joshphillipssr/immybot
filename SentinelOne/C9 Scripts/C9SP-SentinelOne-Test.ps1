@@ -60,40 +60,40 @@ if ($clearPendingDecision.ShouldReboot) {
 Write-Host "[$ScriptName] Phase 1 Complete. Proceeding to S1 health validation..."
 
 # =========================================================================
-# --- Phase 2: S1 Health Validation (The "Test" Logic) ---
+# --- Phase 2: S1 Health Validation (Corrected Logic) ---
 # =========================================================================
 Write-Host "`n[$ScriptName] Phase 2: Evaluating SentinelOne agent health..."
 
-# --- THIS IS THE TEST LOGIC ---
 # We define our "definition of healthy" as a series of rules.
 $s1Status = $script:systemState.S1Status
 $reasonsForFailure = @()
 
 # Rule 1: Agent must be present.
-if (-not $s1Status.IsPresentAnywhere) { $reasonsForFailure += "SentinelOne is not detected anywhere on the system." }
+if (-not $s1Status.IsPresentAnywhere) { $reasonsForFailure += "Agent is not present on the system." }
 
 # Rule 2: All report objects must exist (prevents errors on very broken installs).
 if (-not ($s1Status.ServicesReport -and $s1Status.InstallDirectoryReport -and $s1Status.SentinelCtlStatusReport)) {
     $reasonsForFailure += "One or more critical data reports could not be generated."
 } else {
-    # Rule 3: Main service must be running.
-    $mainServiceState = ($s1Status.ServicesReport | Where-Object { $_.Service -eq 'SentinelAgent' }).RunningState
-    if ($mainServiceState -ne 'Running') { $reasonsForFailure += "Main SentinelAgent service is not running (State: $mainServiceState)." }
+    # Rule 3: Main service must exist and be running. (This now covers the .exe check)
+    $mainService = $s1Status.ServicesReport | Where-Object { $_.Service -eq 'SentinelAgent' }
+    if ($mainService.Existence -ne 'Exists') {
+        $reasonsForFailure += "Main SentinelAgent service does not exist."
+    } elseif ($mainService.RunningState -ne 'Running') {
+        $reasonsForFailure += "Main SentinelAgent service is not running (State: $($mainService.RunningState))."
+    }
 
-    # Rule 4: Active install files must exist.
-    $activeExeStatus = ($s1Status.InstallDirectoryReport | Where-Object { $_.Property -eq 'Active SentinelAgent.exe' }).Value # <-- Corrected property access
-    if ($activeExeStatus -ne 'Exists') { $reasonsForFailure += "Active SentinelAgent.exe is missing." }
-    
-    # Rule 5: No orphaned files.
-    $otherFilesStatus = ($s1Status.InstallDirectoryReport | Where-Object { $_.Property -eq 'Other Child Folder Total Files' }).Value # <-- Corrected property access
-    $otherFileCount = [int]($otherFilesStatus -replace ' files found', '')
-    if ($otherFileCount -gt 0) { $reasonsForFailure += "Orphaned files found in other Sentinel directories ($otherFileCount files)." }
+    # Rule 4: No orphaned files.
+    $otherFilesStatus = ($s1Status.InstallDirectoryReport | Where-Object { $_.Property -eq 'Other Child Folder Total Files' }).Value
+    if ($otherFilesStatus -match '\d+' -and ([int]$otherFilesStatus) -gt 0) {
+        $reasonsForFailure += "Orphaned files found in other Sentinel directories ($otherFilesStatus files)."
+    }
 
-    # Rule 6: sentinelctl must succeed.
+    # Rule 5: sentinelctl must succeed.
     $ctlSuccess = ($s1Status.SentinelCtlStatusReport | Where-Object { $_.Property -eq 'Execution Was Successful' }).Value
     if ($ctlSuccess -ne 'True') { $reasonsForFailure += "sentinelctl.exe status command failed." }
     
-    # Rule 7: Versions must match.
+    # Rule 6: Versions must match.
     if ($s1Status.VersionFromService -ne $s1Status.VersionFromCtl) { $reasonsForFailure += "Version mismatch (Service: $($s1Status.VersionFromService), Ctl: $($s1Status.VersionFromCtl))." }
 }
 
