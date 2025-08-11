@@ -198,7 +198,7 @@ try {
             Invoke-ImmyCommand -Computer $Computer -ScriptBlock {
                 if (Test-Path $using:tempInstallDir) {
                     Write-Host "[$using:ScriptName] Removing temporary directory: $using:tempInstallDir"
-                    Remove-Item -Path $using:tempInstallDir -Recurse -Force -ErrorAction SilentlyContinue
+                    Remove-Item -Path $using:tempInstallDir -Recurse -Force -ErrorAction SilentlyContinue | Out-Null
                     
                     # Verify cleanup
                     if (Test-Path $using:tempInstallDir) {

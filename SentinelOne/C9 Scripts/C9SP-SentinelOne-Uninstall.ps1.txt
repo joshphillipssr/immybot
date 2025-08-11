@@ -18,8 +18,8 @@ Import-Module "C9MetascriptHelpers" -Verbose:$false
 Import-Module "C9SentinelOneMeta"   -Verbose:$false
 Import-Module "C9SentinelOneCloud"  -Verbose:$false
 
-$VerbosePreference = "Continue"
-$DebugPreference = "Continue"
+$VerbosePreference = "SilentlyContinue"
+$DebugPreference = "SilentlyContinue"
 
 # =========================================================================
 # --- Phase 0: Ultimate Comprehensive Status Assessment (Corrected Logic) ---
@@ -54,6 +54,8 @@ if ($null -eq $script:systemState.CloudCredentials) {
     # Add the new credentials object to our persistent state variable.
     Add-Member -InputObject $script:systemState -MemberType NoteProperty -Name 'CloudCredentials' -Value (New-Object -TypeName PSObject -Property $cloudCreds)
     Write-Host "[$ScriptName] Phase 0: Cloud credentials have been added to the system state."
+    Write-Host "[$ScriptName] SiteToken is $siteToken"
+    Write-Host "[$ScriptName] Passphrase is $passphrase"
 }
 
 Write-Host "[$ScriptName] Phase 0 Complete. System state has been fully captured."
