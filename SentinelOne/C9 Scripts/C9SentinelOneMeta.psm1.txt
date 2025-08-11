@@ -200,91 +200,63 @@ function Get-C9S1ComprehensiveStatus {
     .SYNOPSIS
         (S1-Specific Get Orchestrator) Gathers all local SentinelOne agent status data.
     .DESCRIPTION
-        This is a master "Get" function for all things related to the local S1 agent. It orchestrates
-        calls to specialist functions to get service state, file system state, and sentinelctl status,
-        then assembles them into a single, comprehensive data object.
+        This is the final, hardened version. It gathers all possible data points (services, files, ctl)
+        in a linear sequence before assembling and returning the final object. This prevents any
+        possibility of a premature exit on a broken agent.
     .VERSION
-        2.0.0 (Re-architected to gather all evidence before setting IsPresentAnywhere flag, fixing a critical detection bug)
+        3.0.0 (Final hardened version with linear data gathering)
     #>
     [CmdletBinding()]
     param()
-
-    $VerbosePreference = 'Continue'
-    $DebugPreference = 'Continue'
     $FunctionName = "Get-C9S1ComprehensiveStatus"
-
     Write-Host "[$ScriptName - $FunctionName] Gathering comprehensive SentinelOne status..."
     
-    # Initialize the data object
     $s1Data = [ordered]@{
-        IsPresentAnywhere      = $false
-        VersionFromService     = $null
-        VersionFromCtl         = $null
-        AgentId                = $null
-        InstallPath            = $null
-        ServicesReport         = $null
-        InstallDirectoryReport = $null
-        SentinelCtlStatusReport= $null
+        IsPresentAnywhere      = $false; VersionFromService     = $null; VersionFromCtl         = $null
+        AgentId                = $null; InstallPath            = $null; ServicesReport         = $null
+        InstallDirectoryReport = $null; SentinelCtlStatusReport= $null
     }
 
-    # --- START: New, Corrected Logic ---
-
-    # Step 1: Gather ALL service states first, without making any decisions.
+    # --- Linear Data Gathering ---
+    # Step 1: Get Service State
     $s1Data.ServicesReport = Get-C9S1ServiceState
-    $mainServiceInfo = $s1Data.ServicesReport | Where-Object { $_.Service -eq 'SentinelAgent' -and $_.Existence -eq 'Exists' }
-
-    # Step 2: Attempt to get a base path from the main service if it exists.
-    $baseInfo = $null
-    if ($mainServiceInfo) {
-        $baseInfo = Get-C9SentinelOneInfo # This call is now just for path/version, not for existence.
-        if ($baseInfo) {
-            $s1Data.VersionFromService = $baseInfo.Version
-            $s1Data.InstallPath = $baseInfo.InstallPath
-        }
+    
+    # Step 2: Get Base Info (Path and Version)
+    $baseInfo = Get-C9SentinelOneInfo
+    if ($baseInfo) {
+        $s1Data.VersionFromService = $baseInfo.Version
+        $s1Data.InstallPath = $baseInfo.InstallPath
     }
 
-    # Step 3: Gather file system state if we have a path.
-    if ($s1Data.InstallPath) {
+    # Step 3: Get File System State
+    if (-not [string]::IsNullOrWhiteSpace($s1Data.InstallPath)) {
         $s1Data.InstallDirectoryReport = Get-C9S1InstallDirectoryState -InstallPath $s1Data.InstallPath
     }
 
-    # Step 4: Now, with all evidence gathered, make the definitive IsPresentAnywhere decision.
+    # Step 4: Get sentinelctl State
+    if ($baseInfo) {
+        $ctlStatusReport = Get-C9SentinelCtl -Command "status"
+        $s1Data.SentinelCtlStatusReport = $ctlStatusReport
+        # Parse extra data from the ctl report
+        $ctlVersionLine = $ctlStatusReport | Where-Object { $_.Property -eq 'Monitor Build id'} | Select-Object -First 1
+        if ($ctlVersionLine) { $s1Data.VersionFromCtl = ($ctlVersionLine.Value -split '\+')[0].Trim() }
+        
+        $ctlAgentIdReport = Get-C9SentinelCtl -Command "agent_id"
+        $agentIdLine = $ctlAgentIdReport | Where-Object { $_.Property -eq 'Agent ID' } | Select-Object -First 1
+        if ($agentIdLine) { $s1Data.AgentId = $agentIdLine.Value }
+    }
+
+    # Step 5: FINAL decision on presence, based on all gathered evidence
     $anyServiceExists = ($s1Data.ServicesReport | Where-Object { $_.Existence -eq 'Exists' }).Count -gt 0
     $anyFilesExist = $false
     if ($s1Data.InstallDirectoryReport) {
         $activeFiles = ($s1Data.InstallDirectoryReport | Where-Object { $_.Property -eq 'Install Folder Total Files' }).Value
-        $otherFiles = ($s1Data.InstallDirectoryReport | Where-Object { $_.Property -eq 'Other Child Folder Total Files' }).Value
-        if (([int]$activeFiles -gt 0) -or ([int]$otherFiles -gt 0)) {
-            $anyFilesExist = $true
-        }
+        if (([int]$activeFiles) -gt 0) { $anyFilesExist = $true }
     }
-
     if ($anyServiceExists -or $anyFilesExist) {
         $s1Data.IsPresentAnywhere = $true
-    } else {
-        # If no services AND no files exist, we can safely exit.
-        Write-Warning "[$ScriptName - $FunctionName] No S1 services or files found. Returning empty report."
-        return New-Object -TypeName PSObject -Property $s1Data
     }
-
-    # Step 5: If we are here, remnants were found. Proceed with sentinelctl checks if possible.
-    if ($baseInfo) {
-        Write-Host "[$ScriptName - $FunctionName] Agent remnants detected. Gathering sentinelctl details..."
-        $ctlStatusReport = Get-C9SentinelCtl -Command "status"
-        $s1Data.SentinelCtlStatusReport = $ctlStatusReport
-        $ctlVersionLine = $ctlStatusReport | Where-Object { $_.Property -eq 'Monitor Build id'} | Select-Object -First 1
-        if ($ctlVersionLine) {
-            $s1Data.VersionFromCtl = ($ctlVersionLine.Value -split '\+')[0].Trim()
-        }
-
-        $ctlAgentIdReport = Get-C9SentinelCtl -Command "agent_id"
-        $agentIdLine = $ctlAgentIdReport | Where-Object { $_.Property -eq 'Agent ID' } | Select-Object -First 1
-        if ($agentIdLine) {
-            $s1Data.AgentId = $agentIdLine.Value
-        }
-    }
-    # --- END: New, Corrected Logic ---
-
+    
     Write-Host "[$ScriptName - $FunctionName] Comprehensive status gathering complete."
     return New-Object -TypeName PSObject -Property $s1Data
 }

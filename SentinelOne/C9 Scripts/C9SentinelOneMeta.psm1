@@ -860,4 +860,127 @@ function Invoke-C9S1ForcedRemoval {
     }
 }
 
+function Set-C9S1InstallerState {
+    <#
+    .SYNOPSIS
+        (Metascript Helper) Persists critical installer variables to a JSON file on the endpoint.
+    .DESCRIPTION
+        This function takes the installer file, folder, and log paths, and saves them
+        to a standardized JSON file at C:\ProgramData\ImmyBot\S1\installer_var.json.
+        This allows the Uninstall script to retrieve these paths later, even when
+        running in a different context where the variables are not provided by the platform.
+        It follows the established "Two Worlds" pattern, using Invoke-ImmyCommand for all
+        endpoint filesystem operations.
+    .PARAMETER InstallerFolder
+        The full path to the temporary installer folder.
+    .PARAMETER InstallerFile
+        The full path to the downloaded installer executable.
+    .PARAMETER InstallerLogFile
+        The full path to the installer's log file.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstallerFolder,
+        [Parameter(Mandatory = $true)]
+        [string]$InstallerFile,
+        [Parameter(Mandatory = $true)]
+        [string]$InstallerLogFile
+    )
+
+    $FunctionName = "Set-C9S1InstallerState"
+    Write-Host "[$ScriptName - $FunctionName] Preparing to save installer variables to JSON for future use."
+
+    try {
+        $installerVars = @{
+            CaptureTimeUtc   = (Get-Date).ToUniversalTime().ToString("o") 
+            InstallerFolder  = $InstallerFolder
+            InstallerFile    = $InstallerFile
+            InstallerLogFile = $InstallerLogFile
+        }
+
+        $jsonDirectory = "C:\ProgramData\ImmyBot\S1"
+        $jsonFilePath  = Join-Path -Path $jsonDirectory -ChildPath "installer_var.json"
+
+        Write-Host "[$ScriptName - $FunctionName] The following variables will be saved to '$jsonFilePath':"
+        $installerVars | Format-Table | Out-String | Write-Host
+
+        Invoke-ImmyCommand -ScriptBlock {
+            $varsToSave = $using:installerVars
+            $dirPath    = $using:jsonDirectory
+            $filePath   = $using:jsonFilePath
+            
+            # Ensure the directory exists, suppressing output to prevent leaky objects
+            New-Item -Path $dirPath -ItemType Directory -Force -ErrorAction Stop | Out-Null
+            
+            $jsonContent = $varsToSave | ConvertTo-Json -Depth 5
+            
+            Set-Content -Path $filePath -Value $jsonContent -Encoding utf8 -ErrorAction Stop
+        } -ErrorAction Stop
+
+        Write-Host -ForegroundColor Green "[$ScriptName - $FunctionName] [SUCCESS] Successfully saved installer variables."
+        return $true
+
+    } catch {
+        $errorMessage = "A fatal error occurred while saving installer variables to JSON. Error: $($_.Exception.Message)"
+        Write-Error "[$ScriptName - $FunctionName] $errorMessage"
+        throw $errorMessage
+    }
+}
+
+function Get-C9S1InstallerState {
+    <#
+    .SYNOPSIS
+        (Metascript Helper) Retrieves persisted installer variables from the JSON file on the endpoint.
+    .DESCRIPTION
+        This function reads the C:\ProgramData\ImmyBot\S1\installer_var.json file from the
+        endpoint and returns its contents as a PSCustomObject. It handles cases where the
+        file does not exist or is corrupt, returning $null in those scenarios.
+    .OUTPUTS
+        A PSCustomObject containing the persisted variables, or $null if the state file
+        cannot be read.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $FunctionName = "Get-C9S1InstallerState"
+    Write-Host "[$ScriptName - $FunctionName] Attempting to load installer variables from persisted state file..."
+
+    $jsonFilePath = "C:\ProgramData\ImmyBot\S1\installer_var.json"
+
+    try {
+        $persistedVars = Invoke-ImmyCommand -ScriptBlock {
+            $localJsonPath = $using:jsonFilePath
+            
+            if (-not (Test-Path -Path $localJsonPath -PathType Leaf)) {
+                Write-Warning "State file not found at '$localJsonPath'. This is expected for older installations."
+                return $null
+            }
+            
+            try {
+                Write-Host "Found state file. Reading and parsing contents..."
+                $jsonContent = Get-Content -Raw -Path $localJsonPath -ErrorAction Stop
+                return $jsonContent | ConvertFrom-Json -ErrorAction Stop
+            } catch {
+                Write-Error "Failed to read or parse state file at '$localJsonPath'. It may be corrupt. Error: $($_.Exception.Message)"
+                return $null
+            }
+        } -ErrorAction Stop
+
+        if ($null -ne $persistedVars) {
+            Write-Host -ForegroundColor Green "[$ScriptName - $FunctionName] [SUCCESS] Successfully loaded variables from state file."
+            $persistedVars | Format-Table | Out-String | Write-Host
+        } else {
+            Write-Warning "[$ScriptName - $FunctionName] Could not load variables from '$jsonFilePath'."
+        }
+
+        return $persistedVars
+
+    } catch {
+        $errorMessage = "A fatal error occurred while trying to load installer variables. Error: $($_.Exception.Message)"
+        Write-Error "[$ScriptName - $FunctionName] $errorMessage"
+        throw $errorMessage
+    }
+}
+
 Export-ModuleMember -Function *
