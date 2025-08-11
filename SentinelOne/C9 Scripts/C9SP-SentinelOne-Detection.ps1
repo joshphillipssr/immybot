@@ -10,6 +10,8 @@ $DebugPreference = 'Continue'
 
 # This is the hardcoded version to return for broken/unversioned installations.
 # It must match a version available in the software package to route to the Test script correctly.
+# Idealy a solution to give access to the registry keys will be implemented and the detection script
+# eliminated.
 $fallbackVersion = "24.2.3.471"
 
 try {
@@ -22,16 +24,23 @@ try {
     Write-Host "[$ScriptName] Gathering comprehensive SentinelOne status from the endpoint..."
     $s1Status = Get-C9S1ComprehensiveStatus
 
+    # Print the detailed results of the status check for full visibility.
+    $formattedStatus = Format-C9ObjectForDisplay -InputObject $s1Status | Format-Table -AutoSize | Out-String
+    Write-Host "----------------- S1 STATUS REPORT -----------------"
+    Write-Host $formattedStatus
+    Write-Host "----------------------------------------------------"
+    # --- END: Diagnostic Logging Block ---
+
     # --- Step 2: The Main Decision ---
     # Check the single source of truth for agent presence.
     if (-not $s1Status.IsPresentAnywhere) {
-        Write-Host -ForegroundColor Green "[$ScriptName] [CLEAN] No SentinelOne remnants found. Returning `$Null to proceed with installation."
+        Write-Host -ForegroundColor Green "[$ScriptName] [CLEAN] No evident of SentinelOne found. Returning `$Null to proceed with installation."
         return $Null
     }
 
     # --- Step 3: Remnants Found - Find a Version ---
     # If we are here, IsPresentAnywhere was $true. We must return a version number.
-    Write-Host "[$ScriptName] [DETECTED] SentinelOne remnants were found. Attempting to identify a version..."
+    Write-Host "[$ScriptName] [DETECTED] Evidence of SentinelOne was found. Attempting to identify a version..."
 
     # Prioritize the most reliable version source first (from the service EXE).
     if (-not [string]::IsNullOrWhiteSpace($s1Status.VersionFromService)) {

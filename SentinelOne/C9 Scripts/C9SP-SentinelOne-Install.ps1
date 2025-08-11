@@ -7,8 +7,8 @@
 
 param([string]$rebootPreference)
 
-# $VerbosePreference = 'Continue'
-# $ProgressPreference = 'SilentlyContinue'
+$VerbosePreference = 'SilentlyContinue'
+$ProgressPreference = 'SilentlyContinue'
 
 $tempInstallDir = "C:\Temp\S1_Install_$(Get-Random)"
 
@@ -198,7 +198,7 @@ try {
             Invoke-ImmyCommand -Computer $Computer -ScriptBlock {
                 if (Test-Path $using:tempInstallDir) {
                     Write-Host "[$using:ScriptName] Removing temporary directory: $using:tempInstallDir"
-                    Remove-Item -Path $using:tempInstallDir -Recurse -Force -ErrorAction SilentlyContinue | Out-Null
+                    Remove-Item -Path $using:tempInstallDir -Recurse -Force -ErrorAction SilentlyContinue
                     
                     # Verify cleanup
                     if (Test-Path $using:tempInstallDir) {

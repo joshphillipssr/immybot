@@ -7,8 +7,8 @@
 
 param([string]$rebootPreference)
 
-# $VerbosePreference = 'Continue'
-# $ProgressPreference = 'SilentlyContinue'
+$VerbosePreference = 'SilentlyContinue'
+$ProgressPreference = 'SilentlyContinue'
 
 $tempInstallDir = "C:\Temp\S1_Install_$(Get-Random)"
 
