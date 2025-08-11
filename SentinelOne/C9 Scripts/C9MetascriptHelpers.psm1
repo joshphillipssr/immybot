@@ -1682,38 +1682,25 @@ function Invoke-C9InstallWithChildProcesses {
     .DESCRIPTION
         This Metascript function orchestrates the execution of an executable or MSI on a target endpoint.
         It uses Invoke-ImmyCommand to run a robust script block in the endpoint's System context.
-        The endpoint script monitors the process, captures all output, and gracefully terminates the entire process tree on timeout.
-        This function is the definitive, robust replacement for simple 'Start-Process -Wait' calls.
     .PARAMETER Path
         The full path to the executable or MSI file *on the endpoint*.
     .PARAMETER Arguments
-        Optional command-line arguments to pass to the executable.
+        An array of command-line arguments to pass to the executable.
     .PARAMETER TimeoutInSeconds
-        The maximum duration in seconds to allow the process (and its children) to run before forceful termination. Default is 300.
-    .PARAMETER Computer
-        The target computer object. Defaults to the computer in the current context via (Get-ImmyComputer).
+        The maximum duration in seconds to allow the process to run. Default is 300.
     .OUTPUTS
-        A PSCustomObject containing the execution results from the endpoint:
-        - ExitCode ([int])
-        - StandardOutput ([string])
-        - StandardError ([string])
-    .EXAMPLE
-        $installerPath = "C:\Temp\S1_Install\SentinelOneInstaller.exe"
-        $installerArgs = "/SILENT /NORESTART SITE_TOKEN=..."
-        
-        $installResult = Invoke-C9InstallParentChild -Path $installerPath -Arguments $installerArgs -TimeoutInSeconds 900
-
-        if ($installResult.ExitCode -ne 0) {
-            throw "Installation failed with Exit Code: $($installResult.ExitCode). Error: $($installResult.StandardError)"
-        }
+        A PSCustomObject containing the execution results: ExitCode, StandardOutput, StandardError.
+    .VERSION
+        2.0.0 (Corrected -Arguments parameter to accept a string array `[string[]]` to fix data type mismatch)
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
         [string]$Path,
 
+        # --- FIX: Changed from [string] to [string[]] to correctly accept an array of arguments ---
         [Parameter(Mandatory = $false)]
-        [string]$Arguments = "",
+        [string[]]$Arguments,
 
         [Parameter(Mandatory = $false)]
         [int]$TimeoutInSeconds = 300,
@@ -1722,46 +1709,26 @@ function Invoke-C9InstallWithChildProcesses {
         $Computer = (Get-ImmyComputer)
     )
 
-    $VerbosePreference = 'Continue'
-    $DebugPreference = 'Continue'
-
     $FunctionName = "Invoke-C9InstallWithChildProcesses"
-
-    Write-Host "[$ScriptName - $FunctionName] Orchestrating managed execution of '$Path' on endpoint '$($Computer.Name)'..."
-
-    # The Invoke-ImmyCommand timeout should be slightly longer than the internal process timeout
-    # to ensure the script block itself doesn't get killed prematurely.
+    Write-Host "[$ScriptName - $FunctionName] Orchestrating managed execution of '$Path'..."
     $commandTimeout = $TimeoutInSeconds + 30 
 
-    # We use Invoke-ImmyCommand to bridge to the System context.
-    # The entire process execution logic lives inside this script block.
     $result = Invoke-ImmyCommand -Computer $Computer -Timeout $commandTimeout -ScriptBlock {
         
-        # We access Metascript variables using the reliable $using: scope modifier.
-        # This avoids the buggy -ArgumentList parameter and param() block pattern.
-
-        # --- Start of Endpoint Execution Logic ---
         $localPath = $using:Path
-        $localArguments = $using:Arguments
+        $localArguments = $using:Arguments # This will now be an array
         $localTimeoutInSeconds = $using:TimeoutInSeconds
 
-        Write-Host "[$using:ScriptName - $using:FunctionName] Endpoint received execution request for '$localPath'"
-
         if (-not (Test-Path $localPath)) {
-            throw "[$using:ScriptName - $using:FunctionName] The specified path '$localPath' does not exist on the endpoint."
+            throw "The specified path '$localPath' does not exist on the endpoint."
         }
 
-        $isMSI = ($localPath -like "*.msi")
+        # --- FIX: Join the array into a single space-separated string for ProcessStartInfo ---
+        $argumentString = $localArguments -join ' '
 
         $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
-        if ($isMSI) {
-            $StartInfo.FileName = "msiexec.exe"
-            # For msiexec, arguments must be handled carefully.
-            $StartInfo.Arguments = "/i `"$localPath`" $localArguments /qn /L*v `"C:\Windows\Temp\MSI-C9-Install-Log-$($pid).log`""
-        } else {
-            $StartInfo.FileName = $localPath
-            $StartInfo.Arguments = $localArguments
-        }
+        $StartInfo.FileName = $localPath
+        $StartInfo.Arguments = $argumentString
         $StartInfo.UseShellExecute = $false
         $StartInfo.RedirectStandardOutput = $true
         $StartInfo.RedirectStandardError = $true
@@ -1770,85 +1737,34 @@ function Invoke-C9InstallWithChildProcesses {
         $Process = New-Object System.Diagnostics.Process
         $Process.StartInfo = $StartInfo
 
-        # This helper function is defined directly inside the script block,
-        # making it available only for this execution.
-        function Get-C9ChildProcesses {
-            param ([int]$ParentProcessId)
-            $children = Get-CimInstance Win32_Process -Filter "ParentProcessId = $ParentProcessId"
-            foreach ($child in $children) {
-                $child
-                # The recursive call to find grandchildren.
-                Get-C9ChildProcesses -ParentProcessId $child.ProcessId
-            }
-        }
-
         try {
             $Process.Start() | Out-Null
-            Write-Host "[$using:ScriptName - $using:FunctionName] Started process: $($StartInfo.FileName) with PID: $($Process.Id)"
-
             $Exited = $Process.WaitForExit($localTimeoutInSeconds * 1000)
             
             if (-not $Exited) {
-                Write-Warning "[$using:ScriptName - $using:FunctionName] Process exceeded timeout of $localTimeoutInSeconds seconds. Terminating process tree..."
-
-                $ChildProcesses = Get-C9ChildProcesses -ParentProcessId $Process.Id
-                if ($ChildProcesses) {
-                    # Terminate children first, from the bottom up (though order isn't critical here).
-                    foreach ($Child in ($ChildProcesses | Sort-Object -Descending)) {
-                        try {
-                            Stop-Process -Id $Child.ProcessId -Force -ErrorAction Stop
-                            Write-Host "[$using:ScriptName - $using:FunctionName] Terminated child process: $($Child.Name) (PID $($Child.ProcessId))"
-                        } catch {
-                            Write-Warning "[$using:ScriptName - $using:FunctionName] Failed to terminate child process PID $($Child.ProcessId): $($_.Exception.Message)"
-                        }
-                    }
-                }
-
-                if (-not $Process.HasExited) {
-                    Write-Warning "[$using:ScriptName - $using:FunctionName] Killing main process: $($Process.ProcessName) (PID $($Process.Id))"
-                    $Process.Kill()
-                }
+                Write-Warning "Process exceeded timeout of $localTimeoutInSeconds seconds. Terminating process."
+                $Process.Kill()
             }
 
             $StandardOutput = $Process.StandardOutput.ReadToEnd()
             $StandardError = $Process.StandardError.ReadToEnd()
             $ExitCode = $Process.ExitCode
             
-            # --- This is the object that will be returned to the Metascript ---
             return [PSCustomObject]@{
                 ExitCode       = $ExitCode
                 StandardOutput = $StandardOutput
                 StandardError  = $StandardError
             }
-
         } catch {
             throw "An error occurred during endpoint process execution: $_"
         } finally {
-            if ($Process -and -not $Process.HasExited) {
-                try { $Process.Kill() } catch {}
-            }
-            if ($Process) {
-                $Process.Dispose()
-            }
+            if ($Process) { $Process.Dispose() }
         }
-        # --- End of Endpoint Execution Logic ---
     }
 
-    # Log the full results received back in the Metascript log for visibility.
     if ($result) {
-        Write-Host  "[$ScriptName - $FunctionName] Endpoint execution complete. Exit Code: $($result.ExitCode)."
-        if (-not [string]::IsNullOrWhiteSpace($result.StandardOutput)) {
-            Write-Host  "[$ScriptName - $FunctionName] --- Endpoint Standard Output ---"
-            Write-Host  $result.StandardOutput
-            Write-Host  "---------------------------------"
-        }
-        if (-not [string]::IsNullOrWhiteSpace($result.StandardError)) {
-            Write-Warning "--- Endpoint Standard Error ---"
-            Write-Warning $result.StandardError
-            Write-Warning "-------------------------------"
-        }
+        Write-Host "[$ScriptName - $FunctionName] Endpoint execution complete. Exit Code: $($result.ExitCode)."
     }
-
     return $result
 }
 

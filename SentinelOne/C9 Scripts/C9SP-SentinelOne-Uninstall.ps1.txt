@@ -6,32 +6,43 @@
 # =================================================================================
 
 param(
-    [string]$rebootPreference,
-    [string]$InstallerFile
+    [string]$rebootPreference
+    #[string]$InstallerFile
 )
 
 $tempUninstallDir = $null
+$InstallerFile = "C:\ProgramData\ImmyBot\S1\Installer\SentinelOneInstaller_windows_64bit_v24_2_3_471.exe"
 
-# Import all modules needed for the entire script's operation.
+# Import all modules needed.
 Import-Module "C9MetascriptHelpers" -Verbose:$false
 Import-Module "C9SentinelOneMeta"   -Verbose:$false
 Import-Module "C9SentinelOneCloud"  -Verbose:$false
 
-$VerbosePreference = "SilentlyContinue"
-$DebugPreference = "SilentlyContinue"
+$VerbosePreference = "Continue"
+$DebugPreference = "Continue"
 
 # =========================================================================
-# --- Phase 0: Ultimate Comprehensive Status Assessment ---
+# --- Phase 0: Ultimate Comprehensive Status Assessment (Corrected Logic) ---
 # =========================================================================
+# Step 1: Gather the standard, universal system state.
+# This block is now identical to the Test script's "Get" phase.
 if ($null -eq $script:systemState) {
     Write-Host "[$ScriptName] Phase 0: Performing ultimate comprehensive status assessment..."
-    $script:systemState = New-Object -TypeName PSObject
+    $script:systemState = Get-C9ComprehensiveSystemState
     
-    # --- Add S1-Specific Status ---
-    $s1Status = Get-C9S1ComprehensiveStatus
-    Add-Member -InputObject $script:systemState -MemberType NoteProperty -Name 'S1Status' -Value $s1Status
-    
-    # --- Add Cloud Credential Status ---
+    # Log the detailed findings for excellent diagnostics on the first run.
+    $formattedStatus = Format-C9ObjectForDisplay -InputObject $script:systemState | Format-Table -AutoSize | Out-String
+    Write-Host "----------------- COMPREHENSIVE SYSTEM STATE -----------------"
+    Write-Host $formattedStatus
+    Write-Host "------------------------------------------------------------"
+} else {
+    Write-Host "[$ScriptName] Phase 0: Resuming with persisted system state from before reboot."
+}
+
+# Step 2: Gather the uninstall-specific credentials and add them to our state object.
+# We check if the property already exists to prevent errors on a post-reboot run.
+if ($null -eq $script:systemState.CloudCredentials) {
+    Write-Host "[$ScriptName] Phase 0: Gathering additional cloud credentials for uninstall..."
     $passphrase = Get-IntegrationAgentUninstallToken -ErrorAction SilentlyContinue
     $siteToken = Get-IntegrationAgentInstallToken -ErrorAction SilentlyContinue
     $cloudCreds = [ordered]@{
@@ -40,22 +51,13 @@ if ($null -eq $script:systemState) {
         HasPassphrase = (-not [string]::IsNullOrWhiteSpace($passphrase))
         HasSiteToken  = (-not [string]::IsNullOrWhiteSpace($siteToken))
     }
+    # Add the new credentials object to our persistent state variable.
     Add-Member -InputObject $script:systemState -MemberType NoteProperty -Name 'CloudCredentials' -Value (New-Object -TypeName PSObject -Property $cloudCreds)
-
-    # --- Add General System & User Status ---
-    Add-Member -InputObject $script:systemState -MemberType NoteProperty -Name 'RebootPolicy' -Value (Get-C9RebootPolicyContext)
-    Add-Member -InputObject $script:systemState -MemberType NoteProperty -Name 'UserActivity' -Value (Get-C9UserActivityStatus)
-    Add-Member -InputObject $script:systemState -MemberType NoteProperty -Name 'RebootRequirements' -Value (Get-C9SystemRebootRequirements)
-
-    $formattedStatus = Format-C9ObjectForDisplay -InputObject $script:systemState | Format-Table -AutoSize | Out-String
-    Write-Host "----------------- COMPREHENSIVE SYSTEM STATE -----------------"
-    Write-Host $formattedStatus
-    Write-Host "------------------------------------------------------------"
-
-    Write-Host "[$ScriptName] Phase 0 Complete. System state has been captured."
-} else {
-    Write-Host "[$ScriptName] Phase 0: Resuming with persisted system state from before reboot."
+    Write-Host "[$ScriptName] Phase 0: Cloud credentials have been added to the system state."
 }
+
+Write-Host "[$ScriptName] Phase 0 Complete. System state has been fully captured."
+
 
 # =========================================================================
 # --- Phase 1: Attempt Standard Uninstall (Unprotect-First Strategy) ---

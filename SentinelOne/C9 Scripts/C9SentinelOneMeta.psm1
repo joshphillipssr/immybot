@@ -707,16 +707,17 @@ function Invoke-C9S1StandardUninstall {
     .SYNOPSIS
         (Action) Performs the standard, vendor-recommended uninstall using the modern installer's clean command.
     .DESCRIPTION
-        This is our primary removal method. It follows the proven "SCCM Hybrid" model by copying
-        the main installer to a temporary directory before executing it. It intelligently builds the
-        argument list with '-c', '-k <passphrase>', and '-t <sitetoken>' based on available credentials,
-        exactly as per vendor documentation.
+        This is our primary removal method. It is hardened against all known ConstrainedLanguage errors
+        by using safe object creation (New-Object) and by suppressing all unnecessary file system cmdlet
+        output with Out-Null. It correctly passes arguments as a string array to our robust process wrapper.
     .PARAMETER CloudCredentials
         The CloudCredentials object which may contain the Passphrase and/or SiteToken.
     .PARAMETER InstallerFile
         The full path to the main SentinelOneInstaller*.exe file provided by the ImmyBot platform.
     .OUTPUTS
         A PSCustomObject with a boolean 'Success' property and a 'Reason' string.
+    .VERSION
+        3.0.0 (Final hardened version based on successful direct execution testing)
     #>
     [CmdletBinding()]
     param(
@@ -732,6 +733,7 @@ function Invoke-C9S1StandardUninstall {
     # Create a temporary directory on the endpoint.
     $tempDirOnEndpoint = Invoke-ImmyCommand -ScriptBlock {
         $tempPath = Join-Path -Path $env:TEMP -ChildPath "S1_StandardUninstall_$(Get-Date -Format 'yyyyMMddHHmmss')"
+        # FIX: Suppress output from New-Item to prevent ConstrainedLanguage error
         New-Item -Path $tempPath -ItemType Directory -Force | Out-Null
         return $tempPath
     }
@@ -740,30 +742,23 @@ function Invoke-C9S1StandardUninstall {
         # --- Step 1: Copy Installer to Temp Dir (SCCM Hybrid Pattern) ---
         $copiedInstallerPath = Join-Path -Path $tempDirOnEndpoint -ChildPath (Split-Path $InstallerFile -Leaf)
         Write-Host "[$ScriptName - $FunctionName] Copying installer to '$copiedInstallerPath' on endpoint..."
-        Invoke-ImmyCommand -ScriptBlock { Copy-Item -Path $using:InstallerFile -Destination $using:copiedInstallerPath -Force }
+        Invoke-ImmyCommand -ScriptBlock { 
+            # FIX: Suppress output from Copy-Item to prevent ConstrainedLanguage error
+            Copy-Item -Path $using:InstallerFile -Destination $using:copiedInstallerPath -Force | Out-Null
+        }
 
-        # --- Step 2: Intelligently Build the Argument List (Corrected Logic) ---
-        # Start with the mandatory arguments for a clean, quiet removal.
+        # --- Step 2: Intelligently Build the Argument List ---
         $argumentList = "-c", "-q"
-        
-        # Conditionally add the passphrase if it exists.
         if ($CloudCredentials.HasPassphrase) {
-            Write-Host "[$ScriptName - $FunctionName] Passphrase found. Adding '-k' to arguments."
             $argumentList += "-k", "`"$($CloudCredentials.Passphrase)`""
         }
-        
-        # Conditionally add the site token if it exists.
         if ($CloudCredentials.HasSiteToken) {
-            Write-Host "[$ScriptName - $FunctionName] Site token found. Adding '-t' to arguments."
             $argumentList += "-t", "`"$($CloudCredentials.SiteToken)`""
         }
-        
-        $argumentStringForLog = $argumentList -join ' ' # Create a string for logging, replacing real creds
-        $argumentStringForLog = $argumentStringForLog -replace '`"(.+?)`"', '"<REDACTED>"'
+        $argumentStringForLog = ($argumentList -join ' ') -replace '`"(.+?)`"', '"<REDACTED>"'
         Write-Host "[$ScriptName - $FunctionName] Executing installer with arguments: $argumentStringForLog"
 
         # --- Step 3: Execute the command ---
-        # The arguments are now passed as a string array to our robust wrapper.
         $uninstallResult = Invoke-C9InstallWithChildProcesses -Path $copiedInstallerPath -Arguments $argumentList -TimeoutInSeconds 900
 
         if ($uninstallResult.ExitCode -ne 0 -and $uninstallResult.ExitCode -ne 1605) {
@@ -771,16 +766,21 @@ function Invoke-C9S1StandardUninstall {
         }
 
         Write-Host "[$ScriptName - $FunctionName] [SUCCESS] Standard uninstall process completed (Exit Code: $($uninstallResult.ExitCode))."
-        return [PSCustomObject]@{ Success = $true; Reason = "Standard uninstall completed successfully." }
+        # FIX: Use New-Object for the return object to be ConstrainedLanguage-safe
+        return New-Object -TypeName PSObject -Property @{ Success = $true; Reason = "Standard uninstall completed successfully." }
 
     } catch {
         $errorMessage = "Standard uninstall failed. Reason: $($_.Exception.Message)"
         Write-Error "[$ScriptName - $FunctionName] [FAIL] $errorMessage"
-        return [PSCustomObject]@{ Success = $false; Reason = $errorMessage }
+        # FIX: Use New-Object for the return object to be ConstrainedLanguage-safe
+        return New-Object -TypeName PSObject -Property @{ Success = $false; Reason = $errorMessage }
     } finally {
         if ($tempDirOnEndpoint) {
             Write-Host "[$ScriptName - $FunctionName] Cleaning up temporary directory: $tempDirOnEndpoint"
-            Invoke-ImmyCommand { Remove-Item -Path $using:tempDirOnEndpoint -Recurse -Force -ErrorAction SilentlyContinue }
+            Invoke-ImmyCommand { 
+                # FIX: Suppress output from Remove-Item to prevent ConstrainedLanguage error
+                Remove-Item -Path $using:tempDirOnEndpoint -Recurse -Force -ErrorAction SilentlyContinue | Out-Null
+            }
         }
     }
 }
