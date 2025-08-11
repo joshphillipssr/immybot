@@ -25,8 +25,8 @@ try {
     # --- Step 2: The Main Decision ---
     # Check the single source of truth for agent presence.
     if (-not $s1Status.IsPresentAnywhere) {
-        Write-Host -ForegroundColor Green "[$ScriptName] [CLEAN] No SentinelOne remnants found. Returning `$False to proceed with installation."
-        return $False
+        Write-Host -ForegroundColor Green "[$ScriptName] [CLEAN] No SentinelOne remnants found. Returning `$Null to proceed with installation."
+        return $Null
     }
 
     # --- Step 3: Remnants Found - Find a Version ---

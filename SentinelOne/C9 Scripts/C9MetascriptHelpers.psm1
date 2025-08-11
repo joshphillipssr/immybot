@@ -36,6 +36,78 @@ function Write-C9Log {
     }
 }
 
+function Send-C9StateToWebhook {
+    <#
+    .SYNOPSIS
+        (Metascript Helper) Sends a summarized system state payload to a webhook.
+    .DESCRIPTION
+        This function takes the comprehensive system state object, enriches it with platform-level
+        computer information, and sends a clean JSON payload to a specified webhook URL. It runs
+        in the Metascript context, ensuring reliable outbound network access and adhering to
+        ConstrainedLanguage mode safety.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [Uri]$WebhookUrl,
+
+        [Parameter(Mandatory = $true)]
+        [PSCustomObject]$SystemState
+    )
+
+    $FunctionName = "Send-C9StateToWebhook"
+
+    $VerbosePreference = 'SilentlyContinue'
+    $DebugPreference = 'SilentlyContinue'
+    $immyComputerInfo = Get-ImmyComputer
+    
+    Write-Host "[$ScriptName - $FunctionName] Preparing to deliver summarized system state to webhook for computer: $($immyComputerInfo.Name)"
+
+    try {
+        # Create a purpose-built, predictable payload.
+        # We cherry-pick the most important data points for a clean summary.
+        $webhookPayload = @{
+            # --- THE NEW PROPERTY IS ADDED HERE ---
+            immyComputerInfo     = $immyComputerInfo
+            timestamp            = (Get-Date).ToUniversalTime().ToString("o")
+            isS1Present          = $SystemState.S1Status.IsPresentAnywhere
+            s1Version            = $SystemState.S1Status.VersionFromService
+            isRebootPending      = $SystemState.RebootRequirements.IsRebootPending
+            isUserLoggedIn       = $SystemState.UserActivity.IsUserLoggedIn
+            rebootPolicy         = $SystemState.RebootPolicy.RebootPreference
+            fullSystemStateReport= $SystemState # Nest the entire raw system state object
+        }
+
+        # Convert the payload to JSON. Depth is critical for the nested objects.
+        $jsonPayload = $webhookPayload | ConvertTo-Json -Depth 10
+
+        # Use custom headers for better diagnostics on the receiving end.
+        $webhookHeaders = @{
+            'Content-Type' = 'application/json'
+            'User-Agent'   = 'C9-Automation-Framework/1.0'
+        }
+
+        Write-Host "[$ScriptName - $FunctionName] Sending payload to: $WebhookUrl"
+        
+        # Invoke the web request from the Metascript.
+        $response = Invoke-RestMethod -Uri $WebhookUrl -Method Post -Body $jsonPayload -Headers $webhookHeaders -ErrorAction Stop
+        
+        Write-Host -ForegroundColor Green "[$ScriptName - $FunctionName] [SUCCESS] Webhook sent successfully."
+        if ($response) {
+            $responseString = $response | Out-String # Safely convert response to string for logging
+            Write-Host "[$ScriptName - $FunctionName] Webhook response: $responseString"
+        }
+        return $true
+    }
+    catch {
+        # This catch block is 100% ConstrainedLanguage-safe.
+        Write-Warning "[$ScriptName - $FunctionName] [FAIL] An error occurred while sending the webhook."
+        $fullErrorRecord = "$_" 
+        Write-Warning "Full Error Record: $fullErrorRecord"
+        return $false
+    }
+}
+
 function Get-C9ComprehensiveSystemState {
     <#
     .SYNOPSIS
