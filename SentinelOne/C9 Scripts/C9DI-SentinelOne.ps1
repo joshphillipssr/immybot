@@ -5,7 +5,7 @@
 # Docs:     https://immydocs.c9cg.com
 # =================================================================================
 
-$Integration = New-DynamicIntegration -Init {
+$Integration = New-DynamicIntegration -Init { # Seems to run about every 20 minutes
     param(
         [Parameter(Mandatory)]
         [Uri]$S1Uri,
@@ -13,14 +13,15 @@ $Integration = New-DynamicIntegration -Init {
         [Password(StripValue = $true)]
         $S1ApiKey
     )
+
     Write-Host "[Init] Init from C9DI-SentinelOne Script Initializing at (UTC): $(Get-Date)"
     Write-Host "[Init] Before we start, let's make sure we have a URI and ApiKey..."
     Write-Host "[Init] This is our `$S1Uri: $S1Uri"
-    Write-Host "[Init] For security reasons let's just confirm our `$S1ApiKey exists..."
+    Write-Host "[Init] Let's confirm our `$S1ApiKey exists..."
     Write-Host "[Init] Is `$S1ApiKey not `$null?: $($null -ne $S1ApiKey)"
-    Write-Host "[Init] Let's now get started by importing the C9SentinelOneCloud module..."
+    Write-Host "[Init] Ok...that's enough testing...now we get started by importing the C9SentinelOneCloud module..."
     Import-Module C9SentinelOneCloud
-    Write-Host "[Init] Let's authenticate and define a `$S1AuthHeader object using the Connect-C9S1API function..."
+    Write-Host "[Init] Next we authenticate and define a `$S1AuthHeader object using the Connect-C9S1API function..."
     $S1AuthHeader = Connect-C9S1API -S1Uri $S1Uri -S1APIToken $S1ApiKey
     Write-Host "[Init] Now let's populate the `$IntegrationContext object's custom variables..."
     $IntegrationContext.S1Uri = $S1Uri
@@ -30,13 +31,14 @@ $Integration = New-DynamicIntegration -Init {
     Write-Host "[Init] We're all done. Let's finish by printing the result..."
     [OpResult]::Ok()
     
-} -HealthCheck { #Runs every minute
+} -HealthCheck { # Seems to run every minute
     [CmdletBinding()]
     [OutputType([HealthCheckResult])]
     param()
-    Write-Host "[HealthCheck] HealthCheck C9DI-SentinelOne starting at (UTC): $(Get-Date) ---"
-    Write-Host "[HealthCheck] Before we start, let's see what custom properties we have in the `$IntegrationContext object..."
-    $IntegrationContext | Format-List *
+    Write-Host "[HealthCheck] C9DI-SentinelOne HealthCheck starting at (UTC): $(Get-Date) ---"
+    Write-Host "[HealthCheck] We are going to need a `$S1Uri and `$S1ApiKey for this Healthcheck..."
+    Write-Host "[HealthCheck] Our `$S1Uri is: $S1Uri"
+    Write-Host "[HealthCheck] Is `$S1ApiKey not `$null?: $($null -ne $S1ApiKey)"
 
     try {
         Write-Host "[HealthCheck] Now let's import our C9SentinelOneCloud module..."
@@ -54,33 +56,17 @@ $Integration = New-DynamicIntegration -Init {
     }
 }
 
-# --- AUTHENTICATED DOWNLOAD CAPABILITY (Corrected Signature) ---
+# --- AUTHENTICATED DOWNLOAD CAPABILITY ---
 # This capability allows the native ImmyBot downloader to request the necessary
-# authentication headers for a specific URL before it attempts the download.
+# authentication headers for a specific URL before it attempts the download...I think.
 $Integration | Add-DynamicIntegrationCapability -Interface ISupportsAuthenticatedDownload -GetAuthHeader {
     [CmdletBinding()]
     [OutputType([System.Collections.Hashtable])]
     param()
 
-    # This capability's only job is to return the pre-existing authentication header
-    # that was created and stored in the -Init block.
-    Write-Host "[GetAuthHeader] Capability Invoked."
-    Write-Host "[GetAuthHeader] Before we start, let's see what custom properties we have in the `$IntegrationContext object..."
-    $IntegrationContext | Format-List *
-    
-    Write-Host "[GetAuthHeader] Verifying the presence of the implicit `$Url variable..."
-    if (-not $Url) {
-        throw "[GetAuthHeader] CRITICAL: The platform did not provide the implicit `$Url variable to this context."
-    }
-    Write-Host "[GetAuthHeader] The URL provided by the platform is: $($Url)"
-    
-    # We only provide the header for our S1 API. For any other URL, we'd return $null.
-    if ($Url.Host -like "*.sentinelone.net") {
-        return $IntegrationContext.AuthHeader
-    } else {
-        # For other URLs, no auth is needed.
-        return $null
-    }
+    Write-Host "[GetAuthHeader] Capability Invoked. AuthHeader is $($IntegrationContext.AuthHeader)"
+    return $IntegrationContext.AuthHeader
+
 }
 
 # Gets list of all tenants from S1 API
@@ -136,7 +122,7 @@ $Integration |  Add-DynamicIntegrationCapability -Interface ISupportsTenantInsta
     Get-C9S1Site -Id $clientId | ForEach-Object{ $_.registrationToken}
 }
 
-# Deletes an offline agent from S1 API
+# Deletes an offline agent from S1 API. Don't have this working yet.
  $Integration | Add-DynamicIntegrationCapability -Interface ISupportsDeletingOfflineAgent -DeleteAgent {
     [CmdletBinding()]
     [OutputType([System.Void])]
@@ -152,72 +138,34 @@ $Integration | Add-DynamicIntegrationCapability -Interface ISupportsDynamicVersi
     [CmdletBinding()]
     [OutputType([Immybot.Backend.Domain.Models.DynamicVersion[]])]
     param(
-        [Parameter(Mandatory = $True)]
-        [System.String]$ExternalClientId
+        # We need this one for sure:
+        [Parameter(Mandatory = $True)] [System.String]$ExternalClientId
+        # Doesn't seem like we need this one:
+        #[Parameter(Mandatory = $false)] [System.String]$DisplayVersion
     )
-    Write-Host "[GetDynamicVersions] Before we start, let's see what custom properties we have in the `$IntegrationContext object..."
-    $IntegrationContext | Format-List *
+    
     Import-Module C9SentinelOneCloud
     
-    $authHeader = $IntegrationContext.AuthHeader
-    if (-not $authHeader) {
-        throw "AuthHeader not found in IntegrationContext. The -Init block may have failed."
+    Write-Host "[GetDynamicVersions] Capability invoked. Fetching all available GA packages..."
+    $AvailablePackages = Get-C9S1AvailablePackages
+    if (-not $AvailablePackages) {
+        throw "[GetDynamicVersions] Did not receive a list of available packages from the API."
     }
-
-    Write-Host "[GetDynamicVersions] GetDynamicVersions invoked. AuthHeader is present. Processing packages..."
-
-    $GroupedPackages = Get-C9S1AvailablePackages
-    foreach ($group in $GroupedPackages.GetEnumerator()) {
-        
+    
+    # Process all packages and return them to the platform. Seems the platform engine takes it from there.
+    foreach ($group in $AvailablePackages.GetEnumerator()) {
         try {
-            # --- START DIAGNOSTIC HARNESS ---
-            # First, we log the object we are about to process so we can see its structure.
-            $versionDataJson = $group.Value | ConvertTo-Json -Depth 5
-            Write-Host "[GetDynamicVersions] Processing package object: $versionDataJson"
-            # --- END DIAGNOSTIC HARNESS ---
-
-            $versionData = $group.Value
-
-            # This is the logic block we need to test
-            if ($versionData.EXE) {
-                $package = $versionData.EXE
-                $packageType = 'Executable'
-            }
-            elseif ($versionData.MSI) {
-                # Based on the error, "MSI" is not a valid PackageType.
-                # We will skip MSI packages for now to see if this resolves the error.
-                # If we need MSI support, we must find the correct string for the enum.
-                Write-Host "[GetDynamicVersions] Skipping MSI package for version $($versionData.Version)."
-                continue # Skip to the next item in the loop
-            }
-            else {
-                # This handles the case where the object has neither EXE nor MSI.
-                throw "[GetDynamicVersions] Package object for version $($versionData.Version) is malformed and contains no installer."
-            }
+            $packageData = $group.Value
+            if ($packageData.EXE) {
+                $package = $packageData.EXE; $packageType = 'Executable'
+            } elseif ($packageData.MSI) {
+                if ($packageData.Architecture -eq 'ARM64') { continue }
+                $package = $packageData.MSI; $packageType = 'MSI'
+            } else { continue }
             
-            # Create the standard DynamicVersion object
-            $versionObject = New-DynamicVersion -Url $package.link -Version $versionData.Version -FileName $package.fileName -Architecture $versionData.Architecture -PackageType $packageType
-            
-            # Attach the auth header directly to the object.
-            $versionObject | Add-Member -MemberType NoteProperty -Name 'AuthHeader' -Value $authHeader
-            
-            Write-Host "[GetDynamicVersions] Created DynamicVersion for $($versionData.Version) and attached AuthHeader."
-            
-            # Return the modified object to the platform
-            $versionObject
-        }
-        catch {
-            # --- CATCH BLOCK FOR DIAGNOSTICS ---
-            # If any part of the 'try' block fails, we land here.
-            # Instead of crashing, we log the error and the data that caused it.
-            $errorMessage = $_.Exception.Message
-            $badObjectJson = $group.Value | ConvertTo-Json -Depth 5
-            Write-Warning "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-            Write-Warning "!!! [GetDynamicVersions] Failed to process a package object."
-            Write-Warning "!!! [GetDynamicVersions] Error: $errorMessage"
-            Write-Warning "!!! [GetDynamicVersions] The object that caused the failure was: $badObjectJson"
-            Write-Warning "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-            # We continue to the next loop iteration instead of stopping the whole script.
+            New-DynamicVersion -Url $package.link -Version $package.Version -FileName $package.fileName -Architecture $packageData.Architecture -PackageType $packageType
+        } catch {
+            Write-Warning "[GetDynamicVersions] Failed to process a package object. Error: $($_.Exception.Message)"
         }
     }
 }

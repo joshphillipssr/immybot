@@ -255,17 +255,19 @@ function Get-C9S1AvailablePackages {
     [CmdletBinding()]
     param()
 
-    Write-Host "[Get-C9S1AvailablePackages] Let's build our `$QueryParameters object..."
+    $FunctionName = "Get-C9S1AvailablePackages"
+
+    Write-Host "[$ScriptName - $FunctionName] Let's build our `$QueryParameters object..."
     $QueryParameters = @{
         limit          = 50; status = 'ga'; sortBy = 'version'; sortOrder = 'desc';
         osTypes        = 'windows'; fileExtensions = '.exe,.msi'; osArches = '64 bit,32 bit,ARM64'
     }
-    Write-Host "[Get-C9S1AvailablePackages] Our `$QueryParameters is: $QueryParameters"
+    Write-Host "[$ScriptName - $FunctionName] Our `$QueryParameters is: $QueryParameters"
 
-    Write-Host "[Get-C9S1AvailablePackages] We'll build our `$DownloadLinks object with Invoke-C9S1RestMethod..."
-    Write-Host "[Get-C9S1AvailablePackages] The API endpoint will be 'update/agent/packages'..."
+    Write-Host "[$ScriptName - $FunctionName] We'll build our `$DownloadLinks object with Invoke-C9S1RestMethod..."
+    Write-Host "[$ScriptName - $FunctionName] The API endpoint will be 'update/agent/packages'..."
     $DownloadLinks = Invoke-C9S1RestMethod -Endpoint "update/agent/packages" -QueryParameters $QueryParameters
-    Write-Host "[Get-C9S1AvailablePackages] Retrieved $($DownloadLinks.Count) package links. Now grouping and prioritizing..."
+    Write-Host "[$ScriptName - $FunctionName] Retrieved $($DownloadLinks.Count) package links. Now grouping and prioritizing..."
 
     # Iterate through the list and group the installers into an [ordered] hashtable $GroupedVersions
     # so we know how to handle cases where both an exe and msi exist for the same version and architecture.
