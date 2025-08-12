@@ -14,7 +14,7 @@
 
 # --- Configuration ---
 # Write all output to a log file for post-mortem analysis.
-$logFile = "C:\Windows\Temp\C9_ImmyBot_Uninstall.log"
+$logFile = "C:\IT\Scripts\Logs\C9_ImmyBot_Uninstall.log"
 Start-Transcript -Path $logFile -Force
 
 # --- Start of Execution ---
@@ -29,7 +29,7 @@ try {
     # Define the known service names. These are the most likely candidates.
     $serviceNames = @(
         "ImmyBot Agent",
-        "ImmyBot Watchdog" # This is a hypothetical watchdog service name, but common pattern.
+        "ImmyBot Watchdog"
     )
 
     foreach ($serviceName in $serviceNames) {

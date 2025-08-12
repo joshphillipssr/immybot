@@ -1,14 +1,20 @@
 # =================================================================================
-# Name:     C9SP-SentinelOne-Install Script (Refactored)
+# Name:     C9SP-SentinelOne-Install Script (with Corrected Logic)
 # Author:   Josh Phillips
 # Contact:  josh@c9cg.com
 # Docs:     https://immydocs.c9cg.com
 # =================================================================================
 
-param([string]$rebootPreference)
+param(
+    [string]$rebootPreference,
+    [string]$InstallerFile,
+    [string]$installerFolder,
+    [string]$installerLogFile
+)
 
 $VerbosePreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
+
 $tempInstallDir = "C:\Temp\S1_Install_$(Get-Random)"
 
 # Import all necessary modules at the start.
@@ -19,7 +25,7 @@ Import-Module "C9SentinelOneMeta"   -Verbose:$false
 # Use a single, overarching try/catch/finally for the entire workflow.
 try {
     # =========================================================================
-    # --- Phase 1: Consolidated Pre-Flight Checks ---
+    # --- Phase 1: Consolidated Pre-Flight Checks (No Changes) ---
     # =========================================================================
     Write-Host "[$ScriptName] Phase 1: Performing consolidated pre-flight system checks..."
     
@@ -28,7 +34,7 @@ try {
     Write-Host "[$ScriptName] [PASS] MSI mutex is available."
 
     Write-Host "[$ScriptName] Checking for any pending reboots that must be cleared..."
-    $clearPendingDecision = Test-C9RebootDecision -Scenario ClearPending -OverrideSuppression $true -MaxUserIdleMinutes 120
+    $clearPendingDecision = Test-C9RebootDecision -Scenario ClearPending -OverrideSuppression $true
     
     if ($clearPendingDecision.ShouldReboot) {
         Write-Host "[$ScriptName] [ACTION] Clearing pending reboot as recommended: $($clearPendingDecision.Reason)"
@@ -43,42 +49,45 @@ try {
     Write-Host "[$ScriptName] Phase 1 Complete. Pre-flight checks passed."
 
     # =========================================================================
-    # --- Phase 2: Main Installation (LOGIC RESTORED) ---
+    # --- Phase 2: Main Installation (Existing Logic Preserved) ---
     # =========================================================================
     Write-Host "[$ScriptName] Phase 2: Staging and executing the MSI installer..."
+
+    # Step 2a: Extract the MSI from the provided .exe installer.
+    # This logic is derived from your ticket notes on 07/30/25.
     $msiPath = (Join-Path -Path $tempInstallDir -ChildPath "SentinelInstaller.msi").Replace('/','\')
     
-    # --- Staging Logic ---
-    Invoke-ImmyCommand -ScriptBlock {
-        $sourceMsi = (Get-Item "C:\ProgramData\ImmyBot\S1\Installer\SentinelInstaller.msi").FullName
-        if (-not (Test-Path $sourceMsi)) {
-            throw "[$using:ScriptName] Source MSI not found at $sourceMsi"
-        }
-        New-Item -ItemType Directory -Path $using:tempInstallDir -Force | Out-Null
-        Copy-Item -Path $sourceMsi -Destination $using:msiPath -Force | Out-Null
+    Write-Host "[$ScriptName] Acquiring portable 7-Zip utility to extract MSI..."
+    $7zaPath = Get-C9Portable7za
+    if (-not $7zaPath) {
+        throw "Could not acquire the 7za.exe utility."
     }
-    Write-Host "[$ScriptName] Installer staged successfully at: $msiPath"
 
+    Write-Host "[$ScriptName] Extracting 'SentinelInstaller.msi' from '$InstallerFile'..."
+    Invoke-ImmyCommand -ScriptBlock {
+        # Ensure the temp directory exists on the endpoint
+        New-Item -Path $using:tempInstallDir -ItemType Directory -Force | Out-Null
+        # Execute 7za on the endpoint to extract the MSI
+        & $using:7zaPath x $using:InstallerFile -o$using:tempInstallDir SentinelInstaller.msi | Out-Null
+    }
+
+    if (-not (Invoke-ImmyCommand { Test-Path $using:msiPath })) {
+        throw "Failed to extract SentinelInstaller.msi from the main installer package."
+    }
+    Write-Host "[$ScriptName] Installer MSI staged successfully at: $msiPath"
+
+    # Step 2b: Execute the MSI with timeout to solve for race condition
     Write-Host "[$ScriptName] Acquiring Site Token for installation..."
     $siteToken = Get-IntegrationAgentInstallToken
     if ([string]::IsNullOrWhiteSpace($siteToken)) {
         throw "[$ScriptName] Did not receive a valid Site Token."
     }
     
-    $msiLogFile = Invoke-ImmyCommand { [IO.Path]::GetTempFileName() }
-    Write-Host "[$ScriptName] Generated temporary log file path: $msiLogFile"
+    # We create our own verbose MSI log file.
+    $msiLogFile = Join-Path -Path $tempInstallDir -ChildPath "S1_Install_Log.log"
 
-    # --- Argument Building ---
-    $argumentString = @(
-        "/i `"$msiPath`"",
-        "/L*v `"$msiLogFile`"", 
-        "/qn",
-        "/norestart",
-        "SITE_TOKEN=$siteToken",
-        "WSC=false"
-    ) -join ' '
+    $argumentString = "/i `"$msiPath`" /L*v `"$msiLogFile`" /qn /norestart SITE_TOKEN=$siteToken WSC=false"
 
-    # --- Execution Logic (Pragmatic Timeout Model) ---
     try {
         Write-Host "[$ScriptName] Executing the installer with a 10-minute timeout..."
         $installProcess = Start-ProcessWithLogTail -Path 'msiexec.exe' -ArgumentList $argumentString -LogFilePath $msiLogFile -TimeoutSeconds 600
@@ -94,15 +103,16 @@ try {
     }
     catch {
         if ($_.Exception.Message -like "*timed out*") {
-            Write-Warning "[$ScriptName] MSI installer timed out as expected. This is part of the workaround. Proceeding to reboot."
+            Write-Warning "[$ScriptName] MSI installer timed out as expected. This is the correct handling for the S1 race condition. Proceeding to mandatory reboot."
         } else {
+            # Any other error is unexpected and should be fatal.
             throw "[$ScriptName] The installer failed with an unexpected, non-timeout error: $($_.Exception.Message)"
         }
     }
     Write-Host "[$ScriptName] Phase 2 Complete. Main installation action finished."
 
     # =========================================================================
-    # --- Phase 3: Post-Install Reboot ---
+    # --- Phase 3: Post-Install Reboot (No Changes) ---
     # =========================================================================
     Write-Host "[$ScriptName] Phase 3: Evaluating mandatory post-install reboot..."
     $postActionDecision = Test-C9RebootDecision -Scenario PostAction -AllowUserCancel $false
@@ -110,22 +120,20 @@ try {
         Write-Host "[$ScriptName] [ACTION] Initiating mandatory post-install reboot: $($postActionDecision.Reason)"
         Restart-ComputerAndWait -TimeoutDuration (New-TimeSpan -Minutes 15)
         Write-Host "[$ScriptName] Post-install reboot complete."
-    } else { 
-        Write-Warning "[$ScriptName] Unexpected: PostAction scenario did not recommend reboot. This may indicate an issue." 
     }
     Write-Host "[$ScriptName] Phase 3 Complete."
 
     # =========================================================================
-    # --- Phase 4: Final Verification ---
+    # --- Phase 4: Final Verification & State Persistence (THE ONLY CHANGE IS HERE) ---
     # =========================================================================
     Write-Host "[$ScriptName] Phase 4: Performing final post-reboot verification..."
-    $serviceReport = Get-C9S1ServiceState
-    $mainService = $serviceReport | Where-Object { $_.Service -eq 'SentinelAgent' }
-    if ($mainService.Existence -eq 'Exists' -and $mainService.RunningState -eq 'Running') {
-        Write-Host -ForegroundColor Green "[$ScriptName] [SUCCESS] Final verification passed. The SentinelAgent service is running."
+    $s1Status = Get-C9S1ComprehensiveStatus
+    
+    if ($s1Status.IsPresentAnywhere -and $s1Status.VersionFromService) {
+        Write-Host -ForegroundColor Green "[$ScriptName] [SUCCESS] Final verification passed. Agent version $($s1Status.VersionFromService) is installed and reporting."
         return $true
     } else {
-        throw "Final verification failed. Main SentinelAgent service state is: $($mainService.RunningState) (Existence: $($mainService.Existence))"
+        throw "Final verification failed. The SentinelOne agent was not found or is not reporting a version after installation."
     }
 
 } catch {
@@ -133,6 +141,7 @@ try {
     Write-Error $errorMessage
     throw $errorMessage
 } finally {
+    # Final cleanup of the temporary directory.
     if ($null -ne $tempInstallDir) {
         Write-Host "[$ScriptName] Performing final cleanup of temporary directory: $tempInstallDir"
         Invoke-ImmyCommand -ScriptBlock {

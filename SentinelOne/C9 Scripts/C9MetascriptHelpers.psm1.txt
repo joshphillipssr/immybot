@@ -108,6 +108,70 @@ function Send-C9StateToWebhook {
     }
 }
 
+function Get-C9Portable7za {
+    <#
+    .SYNOPSIS
+        (Metascript Helper) Acquires a portable 7za.exe utility on-demand for the endpoint.
+    .DESCRIPTION
+        This function solves the "bootstrap paradox" of needing an unpacker to get an unpacker.
+        It downloads a standard .zip file containing the 7-Zip command-line tools from a reliable
+        public URL. It then uses Invoke-ImmyCommand to have the endpoint unpack this .zip file
+        using the native PowerShell 'Expand-Archive' cmdlet. It finds the 7za.exe within the
+        unpacked contents and returns its full path, ready for use. All temporary files are
+        cleaned up automatically. This architecture is based on the findings from 07/30/25.
+    .OUTPUTS
+        [string] The full path to the portable 7za.exe utility on the endpoint.
+        Returns $null on failure.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $FunctionName = "Get-C9Portable7za"
+    Write-Host "[$ScriptName - $FunctionName] Acquiring portable 7-Zip utility on-demand..."
+
+    $tempUtilDir = "C:\Temp\C9_7za_Portable_$(Get-Random)"
+    $sevenZipUrl = "https://raw.githubusercontent.com/joshphillipssr/immybot/main/SentinelOne/Tools/7z2500-extra.zip"
+    $zipDestinationPath = Join-Path -Path $tempUtilDir -ChildPath "7z-portable.zip"
+    
+    try {
+        Write-Host "[$ScriptName - $FunctionName] Downloading 7-Zip package from '$sevenZipUrl'..."
+        
+        # --- THE FIX IS HERE: ---
+        # We pipe the output of Download-File to Out-Null. This prevents the file object
+        # it returns from "leaking" into our function's return value.
+        Download-File $sevenZipUrl -Destination $zipDestinationPath | Out-Null
+        
+        Write-Host "[$ScriptName - $FunctionName] Download complete."
+
+        $unpackerPath = Invoke-ImmyCommand -ScriptBlock {
+            $localZipPath = $using:zipDestinationPath
+            $localUnpackDir = $using:tempUtilDir
+            New-Item -Path $localUnpackDir -ItemType Directory -Force | Out-Null
+            Write-Host "[$using:ScriptName - $using:FunctionName] Unpacking '$localZipPath' on endpoint..."
+            Expand-Archive -LiteralPath $localZipPath -DestinationPath $localUnpackDir -Force
+            Write-Host "[$using:ScriptName - $using:FunctionName] Searching for portable unpacker in '$localUnpackDir'..."
+            $unpacker = Get-ChildItem -Path $localUnpackDir -Filter "7za.exe" -Recurse | Select-Object -First 1
+            if (-not $unpacker) {
+                throw "Could not find '7za.exe' within the extracted ZIP package."
+            }
+            Write-Host "[$using:ScriptName - $using:FunctionName] Portable unpacker found at: $($unpacker.FullName)"
+            return $unpacker.FullName
+        } -ErrorAction Stop
+
+        if ([string]::IsNullOrWhiteSpace($unpackerPath)) {
+            throw "Failed to get the path to 7za.exe from the endpoint."
+        }
+        
+        Write-Host -ForegroundColor Green "[$ScriptName - $FunctionName] [SUCCESS] Portable 7-Zip is ready at: $unpackerPath"
+        return $unpackerPath
+
+    } catch {
+        $errorMessage = "Failed to acquire portable 7-Zip utility. Error: $($_.Exception.Message)"
+        Write-Error "[$ScriptName - $FunctionName] $errorMessage"
+        return $null
+    }
+}
+
 function Get-C9ComprehensiveSystemState {
     <#
     .SYNOPSIS
