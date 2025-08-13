@@ -124,74 +124,82 @@ function Get-C9S1InstallDirectoryState {
     .SYNOPSIS
         (Specialist) Performs an exhaustive file system state check for all S1 installations.
     .DESCRIPTION
-        This function identifies the parent Sentinel* folder and all of its children. It distinguishes
-        between the "active" installation folder and any other (potentially orphaned) folders. It provides
-        a file count for both the active folder and a sum of all other folders, which is a key
-        diagnostic indicator for parallel/broken installations.
-    .PARAMETER InstallPath
-        The installation path of the currently active agent.
+        This function is now self-sufficient. It finds SentinelOne installation folders by
+        searching for the standard parent directories. It can still distinguish the "active"
+        installation if an active path is provided.
+    .PARAMETER ActiveInstallPath
+        (Optional) The full path to the currently active installation directory.
     .OUTPUTS
-        An array of PSCustomObjects, formatted to produce a clean, vertical diagnostic report.
+        An array of PSCustomObjects formatted for a clean diagnostic report.
+    .VERSION
+        2.0.0 (Hardened to be self-sufficient and resilient to missing services)
     #>
-
     [CmdletBinding()]
+
     param(
-        [Parameter(Mandatory=$true)]
-        [string]$InstallPath
+        # The parameter is now optional. The function can find folders without it.
+        [string]$ActiveInstallPath
     )
 
-    $VerbosePreference = 'Continue'
-    $DebugPreference = 'Continue'
-
     $FunctionName = "Get-C9S1InstallDirectoryState"
+    Write-Host "[$ScriptName - $FunctionName] Performing self-sufficient file system state check..."
 
-    Write-Host "[$ScriptName - $FunctionName] I'm going to use an Invoke-ImmyCommand block and go look at the file system..."
     $dirStateReport = Invoke-ImmyCommand -ScriptBlock {
-        $activeInstallPath = $using:InstallPath; $reportArray = @()
-        Write-Host "[$ScriptName - $FunctionName] Gonna use a try block to see if I can figure out what's going on with: $activeInstallPath...I'll let you know what I found when I'm all finished otherwise this is gonna get noisy..."
+        $localActivePath = $using:ActiveInstallPath
+        $reportArray = @()
+        
         try {
-            $parentDir = Split-Path -Path $activeInstallPath -Parent
-            $activeChildName = Split-Path -Path $activeInstallPath -Leaf
-            $allChildDirs = Get-ChildItem -Path $parentDir -Directory -ErrorAction SilentlyContinue
-            $otherChildDirs = $allChildDirs | Where-Object {
-                $_.Name -ne $activeChildName
+            # --- NEW SELF-SUFFICIENT LOGIC ---
+            # Search for the parent directory instead of assuming it's known.
+            $potentialParentDirs = @(
+                "C:\Program Files\SentinelOne",
+                "C:\Program Files (x86)\SentinelOne"
+            )
+            $parentDir = $null
+            foreach ($dir in $potentialParentDirs) {
+                if (Test-Path $dir) {
+                    $parentDir = $dir
+                    break
+                }
             }
-            $activeFolderFileCount = (Get-ChildItem -Path $activeInstallPath -File -Recurse -ErrorAction SilentlyContinue).Count
+
+            if (-not $parentDir) {
+                # No S1 directories exist at all. Return a clean report stating this fact.
+                $row = New-Object -TypeName PSObject; $row | Add-Member 'Property' 'Installation Folder (Parent)'; $row | Add-Member 'Value' 'Not Found'; $reportArray += $row
+                return $reportArray
+            }
+
+            # --- Existing logic, now powered by our discovered parent directory ---
+            $activeChildName = if (-not [string]::IsNullOrWhiteSpace($localActivePath)) { Split-Path -Path $localActivePath -Leaf } else { "" }
+            $allChildDirs = Get-ChildItem -Path $parentDir -Directory -ErrorAction SilentlyContinue
+            $otherChildDirs = $allChildDirs | Where-Object { $_.Name -ne $activeChildName }
+            
+            $activeFolderFileCount = 0
+            if (-not [string]::IsNullOrWhiteSpace($localActivePath) -and (Test-Path $localActivePath)) {
+                $activeFolderFileCount = (Get-ChildItem -Path $localActivePath -File -Recurse -ErrorAction SilentlyContinue).Count
+            }
+            
             $otherFoldersFileCount = 0
             if ($otherChildDirs) {
                 foreach ($otherDir in $otherChildDirs) {
                     $otherFoldersFileCount += (Get-ChildItem -Path $otherDir.FullName -File -Recurse -ErrorAction SilentlyContinue).Count
                 }
             }
-            $row1 = New-Object -TypeName PSObject
-            Add-Member -InputObject $row1 'Property' 'Installation Folder (Parent)'
-            Add-Member -InputObject $row1 'Value' $parentDir
-            $reportArray += $row1
-            $row2 = New-Object -TypeName PSObject
-            Add-Member -InputObject $row2 'Property' 'Install Folder (Child)'
-            Add-Member -InputObject $row2 'Value' $activeChildName
-            $reportArray += $row2
-            $row3 = New-Object -TypeName PSObject
-            Add-Member -InputObject $row3 'Property' 'Number of additional child folders'
-            Add-Member -InputObject $row3 'Value' "$($otherChildDirs.Count)"
-            $reportArray += $row3
-            $row4 = New-Object -TypeName PSObject
-            Add-Member -InputObject $row4 'Property' 'Install Folder Total Files'
-            Add-Member -InputObject $row4 'Value' "$activeFolderFileCount"
-            $reportArray += $row4
-            $row5 = New-Object -TypeName PSObject
-            Add-Member -InputObject $row5 'Property' 'Other Child Folder Total Files'
-            Add-Member -InputObject $row5 'Value' "$($otherFoldersFileCount)"
-            $reportArray += $row5
+            
+            # Build the report (same as before, but with more reliable data)
+            $row1 = [PSCustomObject]@{Property='Installation Folder (Parent)'; Value=$parentDir}
+            $row2 = [PSCustomObject]@{Property='Active Child Folder'; Value=$activeChildName}
+            $row3 = [PSCustomObject]@{Property='Number of Other Child Folders'; Value=$otherChildDirs.Count}
+            $row4 = [PSCustomObject]@{Property='Active Folder File Count'; Value=$activeFolderFileCount}
+            $row5 = [PSCustomObject]@{Property='Other Child Folders File Count'; Value=$otherFoldersFileCount}
+
+            $reportArray += $row1, $row2, $row3, $row4, $row5
         } catch {
-            $errorRow = New-Object -TypeName PSObject
-            Add-Member -InputObject $errorRow 'Property' 'FileSystem Analysis'
-            Add-Member -InputObject $errorRow 'Value' "Error: $($_.Exception.Message)"
+            $errorRow = [PSCustomObject]@{Property='FileSystem Analysis'; Value="Error: $($_.Exception.Message)"}
             $reportArray += $errorRow
         }
         return $reportArray
     }
-    Write-Host "[$ScriptName - $FunctionName] To be honest, I'm not smart enough to understand everything I found, but here's the (possibly blank) report..."
     return $dirStateReport
 }
 
@@ -204,7 +212,7 @@ function Get-C9S1ComprehensiveStatus {
         in a linear sequence before assembling and returning the final object. This prevents any
         possibility of a premature exit on a broken agent.
     .VERSION
-        3.0.0 (Final hardened version with linear data gathering)
+        3.1.0 (Corrects the final IsPresentAnywhere decision logic based on parent folder existence)
     #>
     [CmdletBinding()]
     param()
@@ -217,7 +225,7 @@ function Get-C9S1ComprehensiveStatus {
         InstallDirectoryReport = $null; SentinelCtlStatusReport= $null
     }
 
-    # --- Linear Data Gathering ---
+    # --- Linear Data Gathering (No changes here) ---
     # Step 1: Get Service State
     $s1Data.ServicesReport = Get-C9S1ServiceState
     
@@ -229,11 +237,9 @@ function Get-C9S1ComprehensiveStatus {
     }
 
     # Step 3: Get File System State
-    if (-not [string]::IsNullOrWhiteSpace($s1Data.InstallPath)) {
-        $s1Data.InstallDirectoryReport = Get-C9S1InstallDirectoryState -InstallPath $s1Data.InstallPath
-    }
+    $s1Data.InstallDirectoryReport = Get-C9S1InstallDirectoryState -ActiveInstallPath $s1Data.InstallPath
 
-    # Step 4: Get sentinelctl State
+    # Step 4: Get sentinelctl State (if possible)
     if ($baseInfo) {
         $ctlStatusReport = Get-C9SentinelCtl -Command "status"
         $s1Data.SentinelCtlStatusReport = $ctlStatusReport
@@ -246,16 +252,25 @@ function Get-C9S1ComprehensiveStatus {
         if ($agentIdLine) { $s1Data.AgentId = $agentIdLine.Value }
     }
 
+    # --- THIS IS THE CORRECTED LOGIC ---
     # Step 5: FINAL decision on presence, based on all gathered evidence
     $anyServiceExists = ($s1Data.ServicesReport | Where-Object { $_.Existence -eq 'Exists' }).Count -gt 0
+    
     $anyFilesExist = $false
     if ($s1Data.InstallDirectoryReport) {
-        $activeFiles = ($s1Data.InstallDirectoryReport | Where-Object { $_.Property -eq 'Install Folder Total Files' }).Value
-        if (([int]$activeFiles) -gt 0) { $anyFilesExist = $true }
+        # The correct way to check for file presence is to see if the parent directory was found.
+        # This implements the logic you correctly specified.
+        $parentDirValue = ($s1Data.InstallDirectoryReport | Where-Object { $_.Property -eq 'Installation Folder (Parent)' }).Value
+        if ($parentDirValue -ne 'Not Found') {
+            $anyFilesExist = $true
+        }
     }
+
+    # If either services OR files exist, the agent is considered present.
     if ($anyServiceExists -or $anyFilesExist) {
         $s1Data.IsPresentAnywhere = $true
     }
+    # --- END OF CORRECTED LOGIC ---
     
     Write-Host "[$ScriptName - $FunctionName] Comprehensive status gathering complete."
     return New-Object -TypeName PSObject -Property $s1Data

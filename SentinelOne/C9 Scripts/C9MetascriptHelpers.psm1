@@ -67,7 +67,6 @@ function Send-C9StateToWebhook {
         # Create a purpose-built, predictable payload.
         # We cherry-pick the most important data points for a clean summary.
         $webhookPayload = @{
-            # --- THE NEW PROPERTY IS ADDED HERE ---
             immyComputerInfo     = $immyComputerInfo
             timestamp            = (Get-Date).ToUniversalTime().ToString("o")
             isS1Present          = $SystemState.S1Status.IsPresentAnywhere
@@ -136,9 +135,7 @@ function Get-C9Portable7za {
     try {
         Write-Host "[$ScriptName - $FunctionName] Downloading 7-Zip package from '$sevenZipUrl'..."
         
-        # --- THE FIX IS HERE: ---
-        # We pipe the output of Download-File to Out-Null. This prevents the file object
-        # it returns from "leaking" into our function's return value.
+        # Pipes Download-File output to Out-Null to avoid returning the file object.
         Download-File $sevenZipUrl -Destination $zipDestinationPath | Out-Null
         
         Write-Host "[$ScriptName - $FunctionName] Download complete."
@@ -191,25 +188,24 @@ function Get-C9ComprehensiveSystemState {
 
     $FunctionName = "Get-C9ComprehensiveSystemState"
 
-    # Announce the start of the entire data gathering process.
+    # Start of comprehensive data gathering.
     Write-Host  "[$ScriptName - $FunctionName] Here we go. Time to gather and report on the complete state of the endpoint..."
     Write-Host  "[$ScriptName - $FunctionName] BEGINNING COMPREHENSIVE SYSTEM STATE REPORT"
 
-    # Initialize the final, all-encompassing state object.
+    # Initialize the final, consolidated state object.
     $systemState = New-Object -TypeName PSObject
 
-    # --- Step 1: Get S1 Agent Status ---
-    # Announce, then call the quiet function.
+    # Step 1: Get S1 Agent Status.
     Write-Host  "[$ScriptName - $FunctionName]`n--- Gathering S1 Agent Status... ---" 
     $s1Status = Get-C9S1ComprehensiveStatus
     Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'S1Status' -Value $s1Status
 
-    # --- Step 2: Get Pending Reboot Status ---
+    # Step 2: Get Pending Reboot Status.
     Write-Host  "[$ScriptName - $FunctionName]`n--- Gathering Pending Reboot Requirements... ---"
     $rebootReqs = Get-C9SystemRebootRequirements
     Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'RebootRequirements' -Value $rebootReqs
     
-    # --- Step 3: Get User Activity Status ---
+    # Step 3: Get User Activity Status.
     Write-Host  "[$ScriptName - $FunctionName]`n--- Gathering User Activity Status... ---"
     $userActivity = Get-C9UserActivityStatus
     Add-Member -InputObject $systemState -MemberType NoteProperty -Name 'UserActivity' -Value $userActivity
@@ -264,9 +260,7 @@ function Get-C9QuserResult {
         return $script:quserResult
     } catch {
         Write-Error "[$ScriptName - $FunctionName] A fatal error occurred while executing quser.exe. Error: $_"
-        # --- THIS IS THE CORRECTED PART ---
-        # On failure, cache a failure object so we don't retry repeatedly.
-        # This ensures downstream functions receive a predictable object and don't crash.
+        # Cache a failure object to avoid repeated retries and provide a predictable downstream shape.
         $script:quserResult = [PSCustomObject]@{
             ExitCode       = -1
             StandardError  = "Failed to execute quser.exe: $($_.Exception.Message)"
@@ -300,7 +294,7 @@ function Get-C9UserIdleTime {
     $idleTimeSpan = try {
         # Execute in 'User' context to get accurate idle time from the interactive session.
         Invoke-ImmyCommand -Computer $Computer -Context User -ErrorAction Stop -ScriptBlock {
-            # This P/Invoke C# code is self-contained and runs perfectly inside the user's session.
+            # P/Invoke helper class compiled in the user's session.
             Add-Type -TypeDefinition @"
             using System;
             using System.Diagnostics;
@@ -337,8 +331,7 @@ function Get-C9UserIdleTime {
         return [TimeSpan]::MaxValue
     }
     
-    # We remove the Write-Host from the specialist function to reduce log noise. The orchestrator will log the final result.
-    # Write-Warning "[$ScriptName - $FunctionName] Idle for $([int]($idleTimeSpan).TotalMinutes) minute(s)"
+    # Log minimal details here; the orchestrator reports the final result.
     Write-Host "[$ScriptName - $FunctionName] Idle time is $idleTimeSpan"
     return $idleTimeSpan
 }
@@ -393,7 +386,7 @@ function Get-C9RebootPolicyContext {
 
     Write-Host  "[$ScriptName - $FunctionName] Gathering platform reboot policy context..."
 
-    # Initialize result object with all possible properties
+    # Initialize result object with policy-related properties.
     $result = [ordered]@{
         RebootPreference                   = $null
         PromptTimeoutAction                = $null
@@ -448,7 +441,7 @@ function Get-C9RebootPolicyContext {
             Write-Host  "[$ScriptName - $FunctionName] PromptTimeout variable not found in current context"
         }
 
-        # Update PolicySource if any variables were found
+        # Update PolicySource if any variables were found.
         $availableCount = @(
             $result.IsRebootPreferenceAvailable,
             $result.IsPromptTimeoutActionAvailable,
@@ -469,7 +462,7 @@ function Get-C9RebootPolicyContext {
 
     $displayRows = Format-C9ObjectForDisplay -InputObject $result -DefaultCategory "Reboot Policy"
 
-    # Format the collected rows into a table string and display it.
+    # Format the collected rows into a table for display.
     $tableOutput = $displayRows | Format-Table -AutoSize | Out-String
     Write-Host  "----------------- REBOOT POLICY CONTEXT -----------------"
     Write-Host  $tableOutput
@@ -527,7 +520,7 @@ function Get-C9UserActivityStatus {
     
     Write-Host "[$ScriptName - $FunctionName] Gathering comprehensive user activity status..."
 
-    # Initialize result object
+    # Initialize result object.
     $result = [ordered]@{
         IsUserLoggedIn      = $false
         IdleTimeMinutes     = -1
@@ -540,11 +533,11 @@ function Get-C9UserActivityStatus {
     }
 
     try {
-        # Step 1: Check if user is logged in (using existing function)
+        # Step 1: Check if a user is logged in.
         Write-Host "[$ScriptName - $FunctionName] Checking user login status via Test-C9IsUserLoggedIn..."
         $result.IsUserLoggedIn = Test-C9IsUserLoggedIn -Computer $Computer
         
-        # Step 2: Get idle time (using existing function)
+        # Step 2: Get idle time.
         Write-Host "[$ScriptName - $FunctionName] Checking user idle time via Get-C9UserIdleTime..."
         $idleTimeSpan = Get-C9UserIdleTime -Computer $Computer
         $result.IdleTimeSpan = $idleTimeSpan
@@ -556,7 +549,7 @@ function Get-C9UserActivityStatus {
             $result.IdleTimeMinutes = [int]$idleTimeSpan.TotalMinutes
         }
 
-        # Step 3: Get lock status (using existing ImmyBot function)
+        # Step 3: Get lock status.
         Write-Host "[$ScriptName - $FunctionName] Checking computer lock status via Get-C9ComputerLockedStatus..."
         try {
             $computerLockStatus = Get-C9ComputerLockedStatus -Computer $Computer -ErrorAction Stop
@@ -567,7 +560,7 @@ function Get-C9UserActivityStatus {
             $result.LockStatus = "Error"
         }
 
-        # Step 4: Get logged on users (using existing ImmyBot function for completeness)
+        # Step 4: Get logged-on users.
         Write-Host "[$ScriptName - $FunctionName] Getting logged on users list via Get-LoggedOnUser..."
         try {
             $loggedOnUsers = @(Get-LoggedOnUser -Computer $Computer -ErrorAction SilentlyContinue)
@@ -584,7 +577,7 @@ function Get-C9UserActivityStatus {
             $result.LoggedOnUsersCount = 0
         }
 
-        # Step 5: Build session info summary
+        # Step 5: Build session info summary.
         if (-not $result.IsUserLoggedIn) {
             $result.SessionInfo = "No active user sessions"
         } elseif ($result.LockStatus -eq "Locked") {
@@ -662,7 +655,7 @@ function Get-C9SystemRebootRequirements {
     
     Write-Host "[$ScriptName - $FunctionName] Gathering system reboot requirements..."
 
-    # Initialize result object with only core types
+    # Initialize result object with core fields only.
     $result = [ordered]@{
         IsRebootPending      = $false
         RebootWillBeRequired = $false # Formerly HasCriticalRebootSources
@@ -674,7 +667,7 @@ function Get-C9SystemRebootRequirements {
     }
 
     try {
-        # Step 1: Get detailed pending reboot information using native function
+        # Step 1: Get detailed pending reboot information.
         Write-Host "[$ScriptName - $FunctionName] Checking for pending reboot conditions..."
         
         # The -Passthru returns a complex object that we must NOT return directly.
@@ -686,7 +679,7 @@ function Get-C9SystemRebootRequirements {
             return New-Object -TypeName PSObject -Property $result
         }
 
-        # Step 2: Extract ONLY the primitive values from the complex object
+        # Step 2: Extract primitive values from the complex object.
         $result.IsRebootPending = $pendingRebootData.IsRebootPending
         $isComponentBasedServicing = $pendingRebootData.ComponentBasedServicing
         $isPendingComputerRenameDomainJoin = $pendingRebootData.PendingComputerRenameDomainJoin
@@ -697,7 +690,7 @@ function Get-C9SystemRebootRequirements {
 
         Write-Host "[$ScriptName - $FunctionName] Overall reboot pending status: $($result.IsRebootPending)"
 
-        # Step 3: Categorize reboot sources
+        # Step 3: Categorize reboot sources.
         if ($result.IsRebootPending) {
             Write-Host "[$ScriptName - $FunctionName] Analyzing reboot sources..."
 
@@ -749,7 +742,7 @@ function Get-C9SystemRebootRequirements {
 
     Write-Host "[$ScriptName - $FunctionName] System reboot requirements gathering complete"
     
-    # Return the new, "flat" object that is ConstrainedLanguage-safe
+    # Return a flat object that is ConstrainedLanguage-safe.
     return New-Object -TypeName PSObject -Property $result
 }
 
@@ -778,8 +771,7 @@ function Test-C9IsUserLoggedIn {
     Write-Host "[$ScriptName - $FunctionName] Starting logged-in user check on $($Computer.Name)..."
 
     try {
-        # --- REFACTORED LOGIC ---
-        # Get the cached or live result from our new helper function. This is the only change.
+        # Get the cached or live result from the helper function.
         $quserResult = Get-C9QuserResult -Computer $Computer
 
         # The rest of the parsing logic is the same, but it now operates on cached data.
@@ -871,10 +863,7 @@ function Test-C9SystemPrerequisites {
     Write-Warning "[$ScriptName - $FunctionName] Checking for pending reboot state..."
     $rebootInfo = Test-PendingReboot
     
-    # =========================================================================
-    # --- BEGIN CORRECTED LOGIC ---
-    # =========================================================================
-    # The IsRebootPending property is what we must check.
+    # Evaluate the IsRebootPending flag returned by Test-PendingReboot.
     if ($rebootInfo.IsRebootPending) {
         $result.RebootPending = $true
         $messages += "[INFO] A pending reboot was detected."
@@ -897,9 +886,6 @@ function Test-C9SystemPrerequisites {
     } else {
         $messages += "[OK] No pending reboot detected."
     }
-    # =========================================================================
-    # --- END CORRECTED LOGIC ---
-    # =========================================================================
 
     # Add the final messages array to the result object
     Add-Member -InputObject $result -MemberType NoteProperty -Name 'Messages' -Value $messages
@@ -917,7 +903,7 @@ function Test-C9EndpointSafeToReboot {
         1.  (Highest Priority) Checks an explicitly passed-in platform policy from a calling script.
         2.  (Second Priority) Checks for the global '$rebootPreference' variable from a Maintenance Task.
         3.  (Final Check) If no platform policy is found, it calls specialist functions like Get-C9UserIdleTime
-            and Get-ComputerLockedStatus to perform granular checks.
+            and Get-C9ComputerLockedStatus to perform granular checks.
     .PARAMETER PlatformPolicy
         An explicit policy string (e.g., "Suppress") passed from a calling script (e.g., an Install script).
     .PARAMETER InitialDelaySeconds
@@ -935,7 +921,7 @@ function Test-C9EndpointSafeToReboot {
     .PARAMETER IgnorePlatformPolicy
         A switch to bypass the primary check of the ImmyBot platform's '$rebootPreference' variable. Use with caution.
     .LOGMODULE
-        Write-C9LogMessage should by imported into scripts that use this function
+        Write-C9LogMessage should be imported into scripts that use this function.
     #>
 
     [CmdletBinding()]
@@ -1269,7 +1255,6 @@ function Test-C9RebootDecision {
         [ValidateSet('PreAction', 'PostAction', 'ClearPending')]
         [string]$Scenario,
         
-        # --- NEW PARAMETER ---
         [Parameter(Mandatory = $false)]
         [PSCustomObject]$SystemState,
         
@@ -1316,14 +1301,14 @@ function Test-C9RebootDecision {
     }
 
     try {
-        # --- MODIFIED LOGIC: Use pre-gathered state if provided, otherwise gather live data ---
+        # Use pre-gathered state when provided; otherwise gather live data.
         if ($null -ne $SystemState) {
             Write-Host "[$ScriptName - $FunctionName] Using pre-gathered system state object."
             $policyContext = $SystemState.RebootPolicy
             $userActivity = $SystemState.UserActivity
             $rebootRequirements = $SystemState.RebootRequirements
         } else {
-            # --- FALLBACK: Gather data now if no state object was passed ---
+            # Gather data if no state object was provided.
             Write-Host "[$ScriptName - $FunctionName] No system state object provided. Gathering live data now..."
             $policyContext = Get-C9RebootPolicyContext -Computer $Computer
             $userActivity = Get-C9UserActivityStatus -Computer $Computer
@@ -1351,7 +1336,7 @@ function Test-C9RebootDecision {
         Write-Host "[$ScriptName - $FunctionName] Current reboot requirements: $($result.RebootRequirementsSummary)"
         Write-Host "[$ScriptName - $FunctionName] Proceeding to decision logic for scenario: $Scenario"
 
-        # Step 2: Apply scenario-specific decision logic (this part remains unchanged)
+        # Apply scenario-specific decision logic.
         switch ($Scenario) {
             'PreAction' {
                 $result = Invoke-PreActionDecisionLogic -Result $result -PolicyContext $policyContext -UserActivity $userActivity -RebootRequirements $rebootRequirements -MaxUserIdleMinutes $MaxUserIdleMinutes -OverrideSuppression $OverrideSuppression -AllowUserCancel $AllowUserCancel -PromptTimeoutMinutes $PromptTimeoutMinutes -WhatIf $WhatIf.IsPresent -Computer $Computer
@@ -1472,7 +1457,7 @@ function Test-C9MsiExecMutex {
     # The entire check is performed on the endpoint, which returns a simple, safe object.
     $resultObject = Invoke-ImmyCommand -Computer $Computer -Timeout 300 {
         
-        # --- Start of Endpoint Logic (System Context / FullLanguage) ---
+        # Endpoint logic (System context / FullLanguage).
 
         # We access Metascript variables using the reliable $using: scope modifier.
         $localWaitTime = $using:MsiExecWaitTime
@@ -1513,9 +1498,7 @@ function Test-C9MsiExecMutex {
             $endpointResult.IsLocked = $false
             $endpointResult.Reason = "Mutex [Global\\_MSIExecute] is available."
         } else {
-            # --- THE BUG FIX IS HERE ---
-            # We explicitly cast the assignment to [void] to prevent the complex WMI objects
-            # from "leaking" onto the success output stream. This stops the ConstrainedLanguage error.
+            # Prevent complex WMI objects from being written to the success stream (avoids ConstrainedLanguage errors).
             [void]($msiProcesses = Get-WmiObject -Class Win32_Process -Filter "name = 'msiexec.exe'")
             
             $conflictingCommands = $msiProcesses | ForEach-Object { $_.CommandLine.Trim() }
@@ -1526,7 +1509,7 @@ function Test-C9MsiExecMutex {
         
         # Return the clean, simple object. This is all the Metascript will see.
         return $endpointResult
-        # --- End of Endpoint Logic ---
+        # End of endpoint logic.
     }
 
     # The outer Metascript function now inspects the clean object and takes action.
@@ -1584,11 +1567,11 @@ function Invoke-PreActionDecisionLogic {
     $FunctionName = "Invoke-PreActionDecisionLogic"
     Write-Host "[$ScriptName - $FunctionName] Evaluating PreAction scenario..."
 
-    # Step 1: Check if existing pending reboot should block the operation
+    # Step 1: Check for blocking pending reboot.
     if ($RebootRequirements.IsRebootPending -and $RebootRequirements.RebootWillBeRequired) {
         Write-Host "[$ScriptName - $FunctionName] Critical pending reboot detected: $($RebootRequirements.CriticalSources -join ', ')"
         
-        # Check platform policy vs override
+        # Evaluate platform policy vs override.
         if ($PolicyContext.RebootPreference -eq "Suppress" -and -not $OverrideSuppression) {
             $Result.ShouldProceed = $false
             $Result.Reason = "Critical pending reboot exists and platform policy suppresses reboots. Cannot proceed safely."
@@ -1596,7 +1579,7 @@ function Invoke-PreActionDecisionLogic {
             return $Result
         }
         
-        # Check user activity for reboot feasibility
+        # Evaluate user activity for reboot feasibility.
         $userActivityCheck = Test-UserActivityForReboot -UserActivity $UserActivity -MaxUserIdleMinutes $MaxUserIdleMinutes
         
         if (-not $userActivityCheck.IsSafe) {
@@ -1608,7 +1591,7 @@ function Invoke-PreActionDecisionLogic {
             return $Result
         }
         
-        # User activity allows reboot - should we clear it before proceeding?
+        # User activity allows reboot; clear pending reboot before proceeding.
         $Result.ShouldProceed = $true
         $Result.ShouldReboot = $true
         $Result.ShouldPromptUser = $AllowUserCancel
@@ -1623,7 +1606,7 @@ function Invoke-PreActionDecisionLogic {
         return $Result
     }
     
-    # Step 2: No critical pending reboot - check if we should proceed
+    # Step 2: No critical pending reboot; check if we should proceed.
     if ($PolicyContext.RebootPreference -eq "Suppress" -and -not $OverrideSuppression) {
         $Result.ShouldProceed = $false
         $Result.Reason = "Platform policy suppresses reboots and no override specified. Cannot guarantee successful operation."
@@ -1631,7 +1614,7 @@ function Invoke-PreActionDecisionLogic {
         return $Result
     }
     
-    # Step 3: Safe to proceed
+    # Step 3: Safe to proceed.
     $Result.ShouldProceed = $true
     $Result.Reason = "No critical blocking conditions detected. Safe to proceed with software changes."
     $Result.RecommendedAction = "Proceed with planned software operation"
@@ -1685,10 +1668,9 @@ function Invoke-PostActionDecisionLogic {
     $FunctionName = "Invoke-PostActionDecisionLogic"
     Write-Host "[$ScriptName - $FunctionName] Evaluating PostAction scenario..."
 
-    # PostAction scenario: Changes have been made that require reboot
-    # Software is in an incomplete state - reboot is mandatory for proper function
+    # PostAction scenario: Changes require reboot; software is in an incomplete state until reboot completes.
     
-    # Step 1: Check user activity
+    # Step 1: Check user activity.
     $userActivityCheck = Test-UserActivityForReboot -UserActivity $UserActivity -MaxUserIdleMinutes $MaxUserIdleMinutes
     
     if (-not $userActivityCheck.IsSafe) {
@@ -1764,7 +1746,7 @@ function Invoke-ClearPendingDecisionLogic {
     $FunctionName = "Invoke-ClearPendingDecisionLogic"
     Write-Host "[$ScriptName - $FunctionName] Evaluating ClearPending scenario..."
 
-    # Step 1: Check if there's actually a pending reboot to clear
+    # Step 1: Check for a pending reboot to clear.
     if (-not $RebootRequirements.IsRebootPending) {
         $Result.ShouldProceed = $true
         $Result.Reason = "No pending reboot detected. No action needed."
@@ -1774,7 +1756,7 @@ function Invoke-ClearPendingDecisionLogic {
     
     Write-Host "[$ScriptName - $FunctionName] Pending reboot detected: $($RebootRequirements.RebootSources -join ', ')"
     
-    # Step 2: Check platform policy vs override
+    # Step 2: Evaluate platform policy vs override.
     if ($PolicyContext.RebootPreference -eq "Suppress" -and -not $OverrideSuppression) {
         $Result.ShouldProceed = $false
         $Result.Reason = "Pending reboot exists but platform policy suppresses reboots. Cannot clear."
@@ -1782,7 +1764,7 @@ function Invoke-ClearPendingDecisionLogic {
         return $Result
     }
     
-    # Step 3: Check user activity for reboot feasibility
+    # Step 3: Evaluate user activity for reboot feasibility.
     $userActivityCheck = Test-UserActivityForReboot -UserActivity $UserActivity -MaxUserIdleMinutes $MaxUserIdleMinutes
     
     if (-not $userActivityCheck.IsSafe) {

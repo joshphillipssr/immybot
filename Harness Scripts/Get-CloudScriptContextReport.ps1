@@ -36,7 +36,6 @@ try {
 
     # --- Phase 2: Variable Inspection ---
     Write-Verbose "Phase 2: Inspecting all available variables..."
-    # CHANGE: Replaced the incompatible New-Object call with a ConstrainedLanguage-safe array.
     $varList = @()
     try {
         $allVars = Get-Variable
@@ -44,7 +43,6 @@ try {
             $varDetail = New-Object -TypeName PSObject
             Add-Member -InputObject $varDetail -MemberType NoteProperty -Name 'Name' -Value $var.Name
             Add-Member -InputObject $varDetail -MemberType NoteProperty -Name 'Value' -Value ($var.Value | Out-String -Stream)
-            # CHANGE: Use the += operator to add to the array.
             $varList += $varDetail
         }
     } catch {
