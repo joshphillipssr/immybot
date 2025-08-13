@@ -10,8 +10,7 @@ $DebugPreference = 'Continue'
 
 # This is the hardcoded version to return for broken/unversioned installations.
 # It must match a version available in the software package to route to the Test script correctly.
-# Idealy a solution to give access to the registry keys will be implemented and the detection script
-# eliminated.
+# Once registry access is available, this detection script can be retired.
 $fallbackVersion = "24.2.3.471"
 
 try {

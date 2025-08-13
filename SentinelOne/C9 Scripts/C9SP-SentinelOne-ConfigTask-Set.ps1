@@ -6,5 +6,5 @@
 # =================================================================================
 
 Write-Host "C9SP-SentinelOne-Configuration-Set script has been initiated"
-Write-Host "This is a placeholder. There is nothing to do. Moving on."
+Write-Host "No configuration changes are required. Continuing."
 Write-Host "C9SP-SentinelOne-Configuration-Set script is finished"

@@ -5,7 +5,7 @@
 # Docs:     https://immydocs.c9cg.com
 # =================================================================================
 
-$Integration = New-DynamicIntegration -Init { # Seems to run about every 20 minutes
+$Integration = New-DynamicIntegration -Init { # Runs approximately every 20 minutes
     param(
         [Parameter(Mandatory)]
         [Uri]$S1Uri,
@@ -31,7 +31,7 @@ $Integration = New-DynamicIntegration -Init { # Seems to run about every 20 minu
     Write-Host "[Init] We're all done. Let's finish by printing the result..."
     [OpResult]::Ok()
     
-} -HealthCheck { # Seems to run every minute
+} -HealthCheck { # Runs approximately every minute
     [CmdletBinding()]
     [OutputType([HealthCheckResult])]
     param()
@@ -58,7 +58,7 @@ $Integration = New-DynamicIntegration -Init { # Seems to run about every 20 minu
 
 # --- AUTHENTICATED DOWNLOAD CAPABILITY ---
 # This capability allows the native ImmyBot downloader to request the necessary
-# authentication headers for a specific URL before it attempts the download...I think.
+# authentication headers for a specific URL before it attempts the download.
 $Integration | Add-DynamicIntegrationCapability -Interface ISupportsAuthenticatedDownload -GetAuthHeader {
     [CmdletBinding()]
     [OutputType([System.Collections.Hashtable])]
@@ -122,7 +122,7 @@ $Integration |  Add-DynamicIntegrationCapability -Interface ISupportsTenantInsta
     Get-C9S1Site -Id $clientId | ForEach-Object{ $_.registrationToken}
 }
 
-# Deletes an offline agent from S1 API. Don't have this working yet.
+# Deletes an offline agent from S1 API.
  $Integration | Add-DynamicIntegrationCapability -Interface ISupportsDeletingOfflineAgent -DeleteAgent {
     [CmdletBinding()]
     [OutputType([System.Void])]
@@ -131,7 +131,6 @@ $Integration |  Add-DynamicIntegrationCapability -Interface ISupportsTenantInsta
             [Immybot.Backend.Domain.Providers.IProviderAgentDetails]$agent
     )
     Write-Host "--- [DELETE-AGENT] Running: $(Get-Date) ---"
-    # return "implement me" # Commenting out placeholder to ensure script validity
 }
 
 $Integration | Add-DynamicIntegrationCapability -Interface ISupportsDynamicVersions -GetDynamicVersions {
@@ -152,7 +151,7 @@ $Integration | Add-DynamicIntegrationCapability -Interface ISupportsDynamicVersi
         throw "[GetDynamicVersions] Did not receive a list of available packages from the API."
     }
     
-    # Process all packages and return them to the platform. Seems the platform engine takes it from there.
+    # Process all packages and return them to the platform; the platform engine handles subsequent steps.
     foreach ($group in $AvailablePackages.GetEnumerator()) {
         try {
             $packageData = $group.Value

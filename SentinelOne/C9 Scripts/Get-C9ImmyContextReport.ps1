@@ -46,7 +46,7 @@ function Get-C9ImmyContextReport {
     $fullReport = [ordered]@{ TimestampUTC = (Get-Date).ToUniversalTime() }
     
     if ($IncludeHostInfo) {
-        # This is the full code block that was replaced by the placeholder.
+        # Collect host information.
         $fullReport['HostInfo'] = @{
             PSVersion = $PSVersionTable.PSVersion.ToString()
             User = $env:USERNAME
@@ -55,15 +55,15 @@ function Get-C9ImmyContextReport {
         }
     }
     if ($IncludeCommands) {
-        # This is the full code block that was replaced by the placeholder.
+        # Capture available commands.
         $fullReport['Commands'] = try { Get-Command } catch { @() }
     }
     if ($IncludeVariables) {
-        # This is the full code block that was replaced by the placeholder.
+        # Capture defined variables.
         $fullReport['Variables'] = try { Get-Variable } catch { @() }
     }
     if ($IncludeModules) {
-        # This is the full code block that was replaced by the placeholder.
+        # Capture modules available on the system.
         $fullReport['Modules'] = try { Get-Module -ListAvailable } catch { @() }
     }
 

@@ -1,3 +1,4 @@
 Write-Host "C9SP-SentinelOne-PostUninstall script has been initiated"
-Write-Host "This is a placeholder. There is nothing to do. Moving on."
+Write-Host "No post-uninstall actions are required. Continuing."
 Write-Host "C9SP-SentinelOne-PostUninstall script is finished"
+
