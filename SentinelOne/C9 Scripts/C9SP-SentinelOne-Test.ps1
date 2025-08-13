@@ -47,27 +47,51 @@ if ($clearPendingDecision.ShouldReboot) {
 }
 Write-Host "[$ScriptName] Phase 1 Complete. Proceeding to S1 health validation..."
 
-# --- Phase 2: S1 Health Validation ---
-# (This logic is unchanged and correct)
-Write-Host "`n[$ScriptName] Phase 2: Evaluating SentinelOne agent health..."
+# --- Phase 2: S1 Health Validation (Services-First Logic) ---
+Write-Host "`n[$ScriptName] Phase 2: Evaluating SentinelOne agent health with services-first logic..."
 $s1Status = $script:systemState.S1Status
-$reasonsForFailure = @()
-if (-not $s1Status.IsPresentAnywhere) { $reasonsForFailure += "Agent is not present on the system." }
-if (-not ($s1Status.ServicesReport -and $s1Status.InstallDirectoryReport -and $s1Status.SentinelCtlStatusReport)) {
-    $reasonsForFailure += "One or more critical data reports could not be generated."
-} else {
-    $mainService = $s1Status.ServicesReport | Where-Object { $_.Service -eq 'SentinelAgent' }
-    if ($mainService.Existence -ne 'Exists') { $reasonsForFailure += "Main SentinelAgent service does not exist." }
-    elseif ($mainService.RunningState -ne 'Running') { $reasonsForFailure += "Main SentinelAgent service is not running (State: $($mainService.RunningState))." }
-    $otherFilesStatus = ($s1Status.InstallDirectoryReport | Where-Object { $_.Property -eq 'Other Child Folder Total Files' }).Value
-    if ($otherFilesStatus -match '\d+' -and ([int]$otherFilesStatus) -gt 0) { $reasonsForFailure += "Orphaned files found in other Sentinel directories ($otherFilesStatus files)." }
-    $ctlSuccess = ($s1Status.SentinelCtlStatusReport | Where-Object { $_.Property -eq 'Execution Was Successful' }).Value
-    if ($ctlSuccess -ne 'True') { $reasonsForFailure += "sentinelctl.exe status command failed." }
-    if ($s1Status.VersionFromService -ne $s1Status.VersionFromCtl) { $reasonsForFailure += "Version mismatch (Service: $($s1Status.VersionFromService), Ctl: $($s1Status.VersionFromCtl))." }
-}
-if ($reasonsForFailure.Count -eq 0) {
-    Write-Host -ForegroundColor Green "[$ScriptName] [PASS] All health checks passed."
+
+# Check if all four core services are present and in a 'Running' state.
+$servicesReport = $s1Status.ServicesReport
+$runningServices = $servicesReport | Where-Object { $_.Existence -eq 'Exists' -and $_.RunningState -eq 'Running' }
+
+if ($runningServices.Count -eq 4) {
+    Write-Host -ForegroundColor Green "[$ScriptName] [PASS] All 4 core SentinelOne services are present and running. The agent is considered healthy."
+    # If the services are healthy, we pass the test immediately.
+    # The presence of orphaned folders is considered a cleanup task, not a health failure.
     return $true
-} else {
-    Write-Warning "[$ScriptName] [FAIL] The agent is considered UNHEALTHY. Reason(s):"; foreach ($reason in $reasonsForFailure) { Write-Warning "- $reason" }; return $false
 }
+
+# --- If we are here, the primary service check failed. Now we gather detailed failure reasons. ---
+Write-Warning "[$ScriptName] [FAIL] Primary health check failed (found $($runningServices.Count)/4 running services). Gathering detailed failure report..."
+$reasonsForFailure = @()
+
+# Analyze services in detail
+if ($runningServices.Count -ne 4) {
+    $notRunning = $servicesReport | Where-Object { $_.RunningState -ne 'Running' }
+    foreach ($service in $notRunning) {
+        $reasonsForFailure += "Service '$($service.Service)' is not running (State: $($service.RunningState), Existence: $($service.Existence))."
+    }
+}
+
+# Now check for other, secondary failure conditions to provide a complete diagnostic picture.
+if (-not $s1Status.IsPresentAnywhere) { $reasonsForFailure += "Agent is not present on the system." }
+
+$otherFilesStatus = ($s1Status.InstallDirectoryReport | Where-Object { $_.Property -eq 'Other Child Folder Total Files' }).Value
+if ($otherFilesStatus -match '\d+' -and ([int]$otherFilesStatus) -gt 0) {
+    # This is a warning/info-level reason, not a primary failure condition.
+    $reasonsForFailure += "[INFO] Orphaned files found in other Sentinel directories ($otherFilesStatus files)."
+}
+
+$ctlSuccess = ($s1Status.SentinelCtlStatusReport | Where-Object { $_.Property -eq 'Execution Was Successful' }).Value
+if (-not $ctlSuccess) { $reasonsForFailure += "sentinelctl.exe status command failed." }
+
+if ($s1Status.VersionFromService -ne $s1Status.VersionFromCtl) {
+    $reasonsForFailure += "Version mismatch (Service: $($s1Status.VersionFromService), Ctl: $($s1Status.VersionFromCtl))."
+}
+
+Write-Warning "[$ScriptName] [FAIL] The agent is considered UNHEALTHY. Reason(s):"
+foreach ($reason in $reasonsForFailure) {
+    Write-Warning "- $reason"
+}
+return $false
