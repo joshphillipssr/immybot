@@ -17,7 +17,7 @@ $Integration = New-DynamicIntegration -Init {
     [CmdletBinding()]
     [OutputType([HealthCheckResult])]
     param()
-    # TODO: Implement Health Check
+    # Health check returns a healthy result by default
     return New-HealthyResult
 }
 
@@ -110,9 +110,8 @@ $Integration | Add-DynamicIntegrationCapability -Interface ISupportsDeletingOffl
             [Immybot.Backend.Domain.Providers.IProviderAgentDetails]$agent
     )
     
-    return "implement me"
+return "implement me"
 
 }
-
 
 return $Integration

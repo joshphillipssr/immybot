@@ -83,7 +83,7 @@ $scriptfunction = {
     # Combine all results into a single list
     $allApps = $registryApps + $wmiApps + $packageApps
 
-    # Remove any entries that don't have a name (to filter out empty entries)
+    # Remove entries lacking a name to filter out empty entries
     $allApps = $allApps | Where-Object { $_.Name -ne $null -and $_.Name -ne "" }
 
     # Special hash function to remove duplicates
