@@ -7,9 +7,6 @@
 
 param([string]$rebootPreference)
 
-$VerbosePreference = 'Continue'
-$DebugPreference = 'Continue'
-
 Import-Module "C9MetascriptHelpers" -Verbose:$false
 Import-Module "C9SentinelOneMeta" -Verbose:$false
 
